@@ -1,0 +1,9 @@
+fastapi>=0.95
+uvicorn[standard]>=0.20
+SQLAlchemy>=1.4
+passlib[bcrypt]>=1.7
+python-jose[cryptography]>=3.3
+pydantic>=1.10
+
+# MySQL driver (pure-Python, easiest on Windows)
+pymysql>=1.0
