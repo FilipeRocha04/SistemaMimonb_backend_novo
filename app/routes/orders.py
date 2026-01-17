@@ -164,6 +164,16 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                 db.add(pr)
                 db.commit()
                 db.refresh(pr)
+                # associate all current items of this newly created order to this remessa
+                try:
+                    # load fresh items and set their remessa_id
+                    items_rows = db.query(PedidoItem).filter(PedidoItem.pedido_id == p.id).all()
+                    for it_row in items_rows:
+                        it_row.remessa_id = pr.id
+                        db.add(it_row)
+                    db.commit()
+                except Exception:
+                    db.rollback()
         except Exception:
             # non-fatal: don't block order creation if remessa persistence fails
             db.rollback()
@@ -289,7 +299,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
             except Exception:
                 remessa_status_map = {}
 
-                d = {
+            d = {
                 'id': r.id,
                 'cliente_id': r.cliente_id,
                 'cliente_nome': getattr(r.cliente, 'nome', None) if getattr(r, 'cliente', None) else None,
@@ -642,7 +652,14 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
         for a in added:
             subtotal += float(a.preco) * int(a.quantidade)
         order.subtotal = subtotal
-        order.valor_total = subtotal  # keep same behavior; service not applied here
+        # respect adicional_10 flag when computing valor_total
+        try:
+            if getattr(order, 'adicional_10', 0):
+                order.valor_total = round(subtotal * 1.1, 2)
+            else:
+                order.valor_total = round(subtotal, 2)
+        except Exception:
+            order.valor_total = subtotal
 
         db.add(order)
         db.commit()
@@ -851,7 +868,11 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
         # subtract from totals
         try:
             order.subtotal = float(order.subtotal or 0) - float(item.preco or 0) * int(item.quantidade or 1)
-            order.valor_total = float(order.subtotal)
+            # respect adicional_10 flag when computing valor_total
+            if getattr(order, 'adicional_10', 0):
+                order.valor_total = round(float(order.subtotal or 0) * 1.1, 2)
+            else:
+                order.valor_total = round(float(order.subtotal or 0), 2)
         except Exception:
             pass
 
@@ -964,7 +985,14 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
             except Exception:
                 pass
         order.subtotal = subtotal
-        order.valor_total = subtotal
+        # respect adicional_10 flag when computing valor_total
+        try:
+            if getattr(order, 'adicional_10', 0):
+                order.valor_total = round(subtotal * 1.1, 2)
+            else:
+                order.valor_total = round(subtotal, 2)
+        except Exception:
+            order.valor_total = subtotal
 
         db.add(order)
         db.commit()
@@ -1085,6 +1113,21 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
                     updated = True
                 except Exception:
                     pass
+
+        # Also allow toggling the 10% adicional flag even when 'status' is not provided
+        # This ensures clients can PATCH only adicional_10 and have it persisted.
+        if 'adicional_10' in payload and payload['adicional_10'] is not None:
+            try:
+                val = int(bool(payload['adicional_10']))
+                order.adicional_10 = val
+                subtotal = float(order.subtotal or 0)
+                if val:
+                    order.valor_total = round(subtotal * 1.1, 2)
+                else:
+                    order.valor_total = round(subtotal, 2)
+                updated = True
+            except Exception:
+                pass
 
         # other top-level updates (e.g., observacao) can be added here if needed
         if not updated:

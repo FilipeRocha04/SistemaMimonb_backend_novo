@@ -3,11 +3,13 @@ import logging
 from typing import List
 from sqlalchemy.orm import Session
 
+import os
 from app.db.session import SessionLocal
 from app.models.product import Produto as ProdutoModel
 from app.models.product_price import ProdutoPreco as ProdutoPrecoModel
 from app.schemas.product import ProdutoCreate, ProdutoRead
 from app.schemas.product_price import ProdutoPrecoRead
+import urllib.parse
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -26,7 +28,24 @@ def get_db():
 def create_product(payload: ProdutoCreate, db: Session = Depends(get_db)):
     try:
         logger.info("create_product payload.categoria=%r unidade=%r unidade_valor=%r", payload.categoria, getattr(payload, 'unidade', None), getattr(payload, 'unidade_valor', None))
-        p = ProdutoModel(nome=payload.nome, categoria=payload.categoria, unidade=payload.unidade, unidade_valor=payload.unidade_valor or 0.0, preco=payload.preco or 0.0, descricao=payload.descricao, ativo=payload.ativo)
+        # Ensure we store only the object key in the DB. If the client sent a full URL,
+        # extract the bucket/key path (e.g. /<bucket>/produtos/uuid.png -> produtos/uuid.png)
+        imagem_val = getattr(payload, 'imagem', None)
+        if isinstance(imagem_val, str) and imagem_val.startswith(('http://', 'https://')):
+            try:
+                parsed = urllib.parse.urlparse(imagem_val)
+                path = parsed.path.lstrip('/')
+                # if path begins with the bucket name, remove it
+                if path.startswith(f"{os.environ.get('MINIO_BUCKET','')}/"):
+                    imagem_key = path.split('/', 1)[1]
+                else:
+                    imagem_key = path
+            except Exception:
+                imagem_key = imagem_val
+        else:
+            imagem_key = imagem_val
+
+        p = ProdutoModel(nome=payload.nome, categoria=payload.categoria, unidade=payload.unidade, unidade_valor=payload.unidade_valor or 0.0, preco=payload.preco or 0.0, descricao=payload.descricao, ativo=payload.ativo, imagem=imagem_key)
         db.add(p)
         db.commit()
         db.refresh(p)
@@ -86,6 +105,21 @@ def update_product(product_id: int, payload: ProdutoCreate, db: Session = Depend
         p.preco = new_price
         p.descricao = payload.descricao
         p.ativo = payload.ativo
+        # Same sanitization: accept either a key or a full URL but store only the key
+        imagem_val = getattr(payload, 'imagem', None)
+        if isinstance(imagem_val, str) and imagem_val.startswith(('http://', 'https://')):
+            try:
+                parsed = urllib.parse.urlparse(imagem_val)
+                path = parsed.path.lstrip('/')
+                if path.startswith(f"{os.environ.get('MINIO_BUCKET','')}/"):
+                    imagem_key = path.split('/', 1)[1]
+                else:
+                    imagem_key = path
+            except Exception:
+                imagem_key = imagem_val
+        else:
+            imagem_key = imagem_val
+        p.imagem = imagem_key
         db.add(p)
         db.commit()
         db.refresh(p)

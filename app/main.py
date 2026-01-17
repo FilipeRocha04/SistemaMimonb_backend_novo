@@ -1,9 +1,18 @@
 from fastapi import FastAPI
+# Load .env automatically so environment variables defined in backend/.env are
+# available when running uvicorn without --env-file. This keeps local dev simpler.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    # dotenv is optional; if not installed or .env not present, proceed silently
+    pass
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import health
 from app.routes import auth as auth_routes
 from app.routes import clients as clients_routes
 from app.routes import products as products_routes
+from app.routes import uploads as uploads_routes
 from app.routes import despesas as despesas_routes
 from app.routes import reservas as reservas_routes
 from app.routes import orders as orders_routes
@@ -32,6 +41,7 @@ app.include_router(health.router)
 app.include_router(auth_routes.router)
 app.include_router(clients_routes.router)
 app.include_router(products_routes.router)
+app.include_router(uploads_routes.router)
 app.include_router(despesas_routes.router)
 app.include_router(reservas_routes.router)
 app.include_router(orders_routes.router)

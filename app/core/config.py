@@ -36,10 +36,18 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))
     # refresh token lifetime in days
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", str(14)))
-    DATABASE_URL: str = os.getenv(
+    # Read DATABASE_URL from env, but be resilient to an accidental repeated
+    # prefix like "DATABASE_URL=DATABASE_URL=..." which was observed in a
+    # malformed .env file. If detected, strip the duplicate prefix so SQLAlchemy
+    # receives a valid URL.
+    raw_db = os.getenv(
         "DATABASE_URL",
         "mysql+pymysql://u235343041_mimonb2:Mimonb%402000@srv1524.hstgr.io:3306/u235343041_mimonb2"
     )
+    if isinstance(raw_db, str) and raw_db.startswith("DATABASE_URL="):
+        # remove the first 'DATABASE_URL=' that was accidentally included
+        raw_db = raw_db.split("=", 1)[1]
+    DATABASE_URL: str = raw_db
 
 
 settings = Settings()

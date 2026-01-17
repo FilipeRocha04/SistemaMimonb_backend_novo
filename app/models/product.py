@@ -21,4 +21,6 @@ class Produto(Base):
     preco = Column('preco_atual', Numeric(10, 2), nullable=False, default=0.0)
     descricao = Column(Text, nullable=True)
     ativo = Column(Boolean, nullable=False, default=True)
+    # imagem: store the public URL or object key metadata in the DB (file will be persisted in MinIO)
+    imagem = Column(String(512), nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

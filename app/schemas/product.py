@@ -11,6 +11,7 @@ class ProdutoCreate(BaseModel):
     preco: Optional[float] = 0.0
     descricao: Optional[str] = None
     ativo: Optional[bool] = True
+    imagem: Optional[str] = None
 
 
 class ProdutoRead(BaseModel):
@@ -22,6 +23,7 @@ class ProdutoRead(BaseModel):
     preco: Optional[float] = 0.0
     descricao: Optional[str] = None
     ativo: Optional[bool] = True
+    imagem: Optional[str] = None
     criado_em: Optional[datetime] = None
 
     class Config:

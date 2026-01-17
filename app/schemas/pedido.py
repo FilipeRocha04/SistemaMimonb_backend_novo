@@ -7,10 +7,15 @@ from app.schemas.pedido_remessa import PedidoRemessaRead
 class PedidoItem(BaseModel):
     id: Optional[int] = None
     remessa_id: Optional[int] = None
+    # produto_id do item, usado para resolver categoria
+    produto_id: Optional[int] = None
     name: str
     quantity: int
     price: float
     observation: Optional[str] = None
+    # categoria/categoria normalizada vinda do backend
+    categoria: Optional[str] = None
+    category: Optional[str] = None
 
 
 class PedidoBase(BaseModel):
@@ -52,3 +57,5 @@ class PedidoRead(BaseModel):
 
     class Config:
         orm_mode = True
+        # allow extra fields coming from manual dict responses (e.g., categoria)
+        extra = "allow"
