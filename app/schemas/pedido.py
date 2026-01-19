@@ -12,6 +12,10 @@ class PedidoItem(BaseModel):
     name: str
     quantity: int
     price: float
+    # quando verdadeiro, aplica metade do preço do produto no momento da venda
+    metade: Optional[bool] = None
+    # fator aplicado ao preço base (ex.: 0.5 para meia). Somente leitura em respostas
+    preco_fator: Optional[float] = None
     observation: Optional[str] = None
     # categoria/categoria normalizada vinda do backend
     categoria: Optional[str] = None
@@ -19,7 +23,8 @@ class PedidoItem(BaseModel):
 
 
 class PedidoBase(BaseModel):
-    mesa_numero: Optional[str]
+    # mesa_numero deve ser realmente opcional no payload de criação
+    mesa_numero: Optional[str] = None
     cliente_id: Optional[int]
     items: Optional[List[PedidoItem]] = []
     total: float = 0.0

@@ -20,7 +20,8 @@ class Reserva(Base):
     data_reserva = Column(Date, nullable=False)
     hora_reserva = Column(Time, nullable=False)
     quantidade_pessoas = Column(Integer, nullable=False, default=1)
-    status = Column(Enum(ReservaStatus), nullable=False, default=ReservaStatus.pendente)
+    # Default new reservations to 'confirmada' at DB/model level
+    status = Column(Enum(ReservaStatus), nullable=False, default=ReservaStatus.confirmada)
     observacao = Column(Text, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())

@@ -2,21 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.despesa import Despesa as DespesaModel
-from app.schemas.despesa import DespesaCreate, DespesaRead
+from app.schemas.despesa import DespesaCreate, DespesaRead, DespesaUpdate
 
 router = APIRouter(prefix="/despesas", tags=["Despesas"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
+@router.post("", response_model=DespesaRead)
 @router.post("/", response_model=DespesaRead)
 def create_despesa(payload: DespesaCreate, db: Session = Depends(get_db)):
     try:
@@ -41,6 +37,7 @@ def create_despesa(payload: DespesaCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("", response_model=List[DespesaRead])
 @router.get("/", response_model=List[DespesaRead])
 def list_despesas(
     page: int = Query(1, ge=1),
@@ -103,6 +100,33 @@ def update_despesa(despesa_id: int, payload: DespesaCreate, db: Session = Depend
         d.categoria = payload.categoria
         d.pagamento = payload.pagamento
         d.valor = payload.valor
+        if getattr(payload, 'atualizado_em', None):
+            d.atualizado_em = payload.atualizado_em
+        db.add(d)
+        db.commit()
+        db.refresh(d)
+        return d
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{despesa_id}", response_model=DespesaRead)
+def patch_despesa(despesa_id: int, payload: DespesaUpdate, db: Session = Depends(get_db)):
+    d = db.query(DespesaModel).filter(DespesaModel.id == despesa_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Despesa não encontrada")
+    try:
+        if payload.data is not None:
+            d.data = payload.data
+        if payload.descricao is not None:
+            d.descricao = payload.descricao
+        if payload.categoria is not None:
+            d.categoria = payload.categoria
+        if payload.pagamento is not None:
+            d.pagamento = payload.pagamento
+        if payload.valor is not None:
+            d.valor = payload.valor
         if getattr(payload, 'atualizado_em', None):
             d.atualizado_em = payload.atualizado_em
         db.add(d)

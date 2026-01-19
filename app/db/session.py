@@ -1,6 +1,10 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, text, event
+from sqlalchemy.pool import QueuePool
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
+import logging
+import threading
+import contextvars
 
 DATABASE_URL = settings.DATABASE_URL
 
@@ -12,11 +16,101 @@ if DATABASE_URL.startswith("sqlite"):
 # Enable pool_pre_ping so SQLAlchemy checks connections from the pool before using them.
 # This avoids "MySQL server has gone away" errors caused by stale/closed connections.
 # You can also tune pool_recycle or MySQL's wait_timeout on the server side if needed.
-engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args=connect_args,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_pre_ping=True,
+    pool_recycle=settings.DB_POOL_RECYCLE,
+    poolclass=QueuePool,
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+# --- Pool monitoring: log connects and checkouts to help diagnose excess connections ---
+_pool_logger = logging.getLogger("app.db.pool")
+_pool_logger.setLevel(getattr(logging, settings.LOG_LEVEL, logging.INFO))
+_connect_count = 0
+_checkout_count = 0
+_checkin_count = 0
+_pool_lock = threading.Lock()
+
+# --- Per-request DB query counting using ContextVar ---
+# The FastAPI middleware sets this to 0 at the start of each request. SQLAlchemy
+# listeners increment it on each executed cursor, allowing us to log the total
+# number of DB roundtrips per HTTP request.
+request_db_query_count = contextvars.ContextVar("request_db_query_count", default=None)
+_global_db_query_count = 0
+
+
+@event.listens_for(engine, "connect")
+def _on_connect(dbapi_connection, connection_record):
+    global _connect_count
+    with _pool_lock:
+        _connect_count += 1
+        cnt = _connect_count
+    # Log every N connects to avoid noisy output
+    if cnt % settings.DB_LOG_EVERY_N == 0:
+        _pool_logger.info(f"SQLAlchemy Pool CONNECT events: total opened={cnt}")
+
+
+@event.listens_for(engine, "checkout")
+def _on_checkout(dbapi_connection, connection_record, connection_proxy):
+    global _checkout_count
+    with _pool_lock:
+        _checkout_count += 1
+        cnt = _checkout_count
+    if cnt % settings.DB_LOG_EVERY_N == 0:
+        _pool_logger.info(f"SQLAlchemy Pool CHECKOUT events: total checkouts={cnt}")
+
+
+@event.listens_for(engine, "checkin")
+def _on_checkin(dbapi_connection, connection_record):
+    global _checkin_count
+    with _pool_lock:
+        _checkin_count += 1
+        cnt = _checkin_count
+    if cnt % settings.DB_LOG_EVERY_N == 0:
+        _pool_logger.info(f"SQLAlchemy Pool CHECKIN events: total checkins={cnt}")
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _on_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    # increment per-request counter when present
+    try:
+        current = request_db_query_count.get()
+        if current is not None:
+            request_db_query_count.set(int(current) + 1)
+    except Exception:
+        pass
+    # increment global counter
+    global _global_db_query_count
+    with _pool_lock:
+        _global_db_query_count += 1
+
+
+def get_global_db_queries_total() -> int:
+    """Return the total number of DB roundtrips since process start."""
+    try:
+        return int(_global_db_query_count)
+    except Exception:
+        return 0
+
+
+def get_db():
+    """FastAPI dependency that provides a scoped SQLAlchemy Session.
+
+    Ensures the connection is checked out from the pool and always returned
+    after the request, preventing leaks and excessive new connections.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def create_db():
@@ -31,6 +125,8 @@ def create_db():
         import app.models.reserva  # noqa: F401
         import app.models.pedido  # noqa: F401
         import app.models.pedido_item  # noqa: F401
+        import app.models.pedido_remessa  # noqa: F401
+        import app.models.pedido_categoria_status  # noqa: F401
     except Exception:
         pass
     Base.metadata.create_all(bind=engine)
@@ -115,3 +211,32 @@ def create_db():
                         print("Warning: failed to add column 'itens_json' to 'pedidos':", exc_items)
         except Exception:
             pass
+
+    # Ensure pedido_items.status column exists for item-level preparation status
+    try:
+        inspector3 = inspect(engine)
+        if 'pedido_items' in inspector3.get_table_names():
+            item_cols = [c['name'] for c in inspector3.get_columns('pedido_items')]
+            if 'status' not in item_cols:
+                try:
+                    with engine.begin() as conn:
+                        if DATABASE_URL.startswith('sqlite'):
+                            # SQLite: add column without NOT NULL/DEFAULT constraints
+                            conn.execute(text("ALTER TABLE pedido_items ADD COLUMN status VARCHAR(20)"))
+                            # Backfill existing rows to 'pendente' where NULL
+                            conn.execute(text("UPDATE pedido_items SET status = 'pendente' WHERE status IS NULL"))
+                        else:
+                            # MySQL/MariaDB: add NOT NULL with DEFAULT
+                            conn.execute(text("ALTER TABLE pedido_items ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pendente'"))
+                except Exception as exc_status:
+                    print("Warning: failed to add column 'status' to 'pedido_items':", exc_status)
+            else:
+                # Ensure existing NULLs are backfilled to 'pendente'
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE pedido_items SET status = 'pendente' WHERE status IS NULL"))
+                except Exception:
+                    pass
+    except Exception:
+        # Non-fatal: continue startup even if inspector fails
+        pass

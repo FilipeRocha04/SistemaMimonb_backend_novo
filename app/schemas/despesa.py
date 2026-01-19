@@ -23,3 +23,13 @@ class DespesaRead(DespesaBase):
 
     class Config:
         orm_mode = True
+
+
+class DespesaUpdate(BaseModel):
+    # All fields optional for PATCH updates
+    data: Optional[date] = None
+    descricao: Optional[str] = None
+    categoria: Optional[str] = None
+    pagamento: Optional[str] = None
+    valor: Optional[float] = None
+    atualizado_em: Optional[datetime] = None

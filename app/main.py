@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 # Load .env automatically so environment variables defined in backend/.env are
 # available when running uvicorn without --env-file. This keeps local dev simpler.
 try:
@@ -19,13 +19,116 @@ from app.routes import orders as orders_routes
 from app.routes import kitchen as kitchen_routes
 from app.routes import pagamentos as pagamentos_routes
 from app.routes import users as users_routes
+from app.routes import stats as stats_routes
 from app.db import session as db_session
+from app.core.config import settings
+import logging
+import threading
+from collections import defaultdict
+import time
 
 app = FastAPI(
     title="API Backend - FastAPI",
     version="1.0.0",
-    description="Backend profissional com FastAPI"
+    description="Backend profissional com FastAPI",
+    # Avoid automatic 307 redirects between /path and /path/
+    # We'll register both variants on root endpoints to accept either form.
+    redirect_slashes=False,
 )
+
+# Configure logging level from env
+logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL, logging.INFO))
+# Use a dedicated app logger to avoid uvicorn.access formatter expectations
+_req_logger = logging.getLogger("app.request")
+_req_logger.setLevel(getattr(logging, settings.LOG_LEVEL, logging.INFO))
+
+# In-memory request counters per route (method + path), guarded by a lock
+_request_counts = defaultdict(int)
+_req_lock = threading.Lock()
+_global_request_count = 0
+
+
+@app.middleware("http")
+async def request_count_middleware(request: Request, call_next):
+    # Prefer the mounted route path template when available
+    path_template = None
+    try:
+        route = request.scope.get("route")
+        if route and hasattr(route, "path"):
+            path_template = route.path
+    except Exception:
+        path_template = None
+    key_path = path_template or request.url.path
+    key = f"{request.method} {key_path}"
+
+    # Increment counter before executing handler
+    with _req_lock:
+        _request_counts[key] += 1
+        count_val = _request_counts[key]
+        # track global count across all routes
+        global _global_request_count
+        _global_request_count += 1
+        global_count_val = _global_request_count
+
+    # Log every N hits to avoid spam
+    if count_val % settings.REQUEST_LOG_EVERY_N == 0:
+        _req_logger.info(f"Request count threshold reached: {key} -> {count_val} (global={global_count_val})")
+
+    # Optional per-request verbose logging for CRUD routes
+    verbose = settings.REQUEST_LOG_VERBOSE
+    prefixes = [p.strip() for p in (settings.REQUEST_LOG_INCLUDE_PREFIXES or "").split(",") if p.strip()]
+
+    # Initialize per-request DB query counter
+    db_count_token = None
+    try:
+        # set to 0; SQLAlchemy listener will increment during this request
+        db_count_token = db_session.request_db_query_count.set(0)
+    except Exception:
+        db_count_token = None
+
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = int((time.perf_counter() - start) * 1000)
+
+    # Read per-request DB query count
+    per_req_db_count = None
+    try:
+        per_req_db_count = db_session.request_db_query_count.get()
+        # reset the ContextVar to previous state
+        if db_count_token is not None:
+            try:
+                db_session.request_db_query_count.reset(db_count_token)
+            except Exception:
+                pass
+    except Exception:
+        per_req_db_count = None
+    if verbose:
+        try:
+            path_full = request.url.path
+            # Log only for selected prefixes
+            if any(path_full.startswith(pref) for pref in prefixes):
+                qs = request.url.query
+                path_qs = f"{path_full}?{qs}" if qs else path_full
+                # Always log at INFO so it's visible even when LOG_LEVEL=INFO
+                _req_logger.info(
+                    f"{request.method} {path_qs} -> {response.status_code} in {duration_ms}ms | route_count={count_val} global_count={global_count_val}"
+                )
+                # Explicit Portuguese line for DB queries per request
+                try:
+                    total_global_db = db_session.get_global_db_queries_total()
+                except Exception:
+                    total_global_db = None
+                if isinstance(per_req_db_count, int):
+                    _req_logger.info(
+                        f"Foram {per_req_db_count} requisições ao banco nesta requisição."
+                    )
+                if isinstance(total_global_db, int):
+                    _req_logger.info(
+                        f"Total global de requisições ao banco desde o início: {total_global_db}."
+                    )
+        except Exception:
+            pass
+    return response
 
 # Configure CORS for local frontend dev (Vite default localhost:8080). Adjust in production.
 app.add_middleware(
@@ -48,6 +151,7 @@ app.include_router(orders_routes.router)
 app.include_router(kitchen_routes.router)
 app.include_router(pagamentos_routes.router)
 app.include_router(users_routes.router)
+app.include_router(stats_routes.router)
 
 
 @app.on_event("startup")

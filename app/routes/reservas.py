@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 import traceback
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.reserva import Reserva as ReservaModel
 from app.models.client import Cliente as ClienteModel
 from app.schemas.reserva import ReservaCreate, ReservaRead
@@ -11,14 +11,10 @@ from app.schemas.reserva import ReservaCreate, ReservaRead
 router = APIRouter(prefix="/reservas", tags=["Reservas"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
+@router.post("", response_model=ReservaRead)
 @router.post("/", response_model=ReservaRead)
 def create_reserva(payload: ReservaCreate, db: Session = Depends(get_db)):
     try:
@@ -43,6 +39,7 @@ def create_reserva(payload: ReservaCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=tb)
 
 
+@router.get("", response_model=List[ReservaRead])
 @router.get("/", response_model=List[ReservaRead])
 def list_reservas(
     page: int = Query(1, ge=1),

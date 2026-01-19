@@ -4,7 +4,7 @@ from typing import List
 from sqlalchemy.orm import Session
 
 import os
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.product import Produto as ProdutoModel
 from app.models.product_price import ProdutoPreco as ProdutoPrecoModel
 from app.schemas.product import ProdutoCreate, ProdutoRead
@@ -16,14 +16,10 @@ router = APIRouter(prefix="/products", tags=["Products"])
 logger = logging.getLogger(__name__)
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
+@router.post("", response_model=ProdutoRead)
 @router.post("/", response_model=ProdutoRead)
 def create_product(payload: ProdutoCreate, db: Session = Depends(get_db)):
     try:
@@ -63,6 +59,7 @@ def create_product(payload: ProdutoCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("", response_model=List[ProdutoRead])
 @router.get("/", response_model=List[ProdutoRead])
 def list_products(db: Session = Depends(get_db)):
     try:

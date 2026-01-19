@@ -49,5 +49,30 @@ class Settings:
         raw_db = raw_db.split("=", 1)[1]
     DATABASE_URL: str = raw_db
 
+    # Connection pool tuning (defaults chosen for small/medium apps)
+    APP_ENV: str = os.getenv("APP_ENV", os.getenv("ENV", "development")).lower()
+    # Environment-aware defaults (can be overridden via env)
+    _default_pool_size = 5 if APP_ENV == "development" else 10
+    _default_max_overflow = 2 if APP_ENV == "development" else 20
+    _default_pool_recycle = 900 if APP_ENV == "development" else 1800
+
+    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", str(_default_pool_size)))
+    DB_MAX_OVERFLOW: int = int(os.getenv("DB_MAX_OVERFLOW", str(_default_max_overflow)))
+    DB_POOL_RECYCLE: int = int(os.getenv("DB_POOL_RECYCLE", str(_default_pool_recycle)))  # seconds
+
+    # Logging and monitoring controls
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+    # Log request counters every N hits per route
+    REQUEST_LOG_EVERY_N: int = int(os.getenv("REQUEST_LOG_EVERY_N", "100"))
+    # Log pool events every N occurrences
+    DB_LOG_EVERY_N: int = int(os.getenv("DB_LOG_EVERY_N", "50"))
+    # Verbose per-request logging (development aid)
+    REQUEST_LOG_VERBOSE: bool = str(os.getenv("REQUEST_LOG_VERBOSE", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    # Comma-separated route prefixes to include for verbose logging
+    REQUEST_LOG_INCLUDE_PREFIXES: str = os.getenv(
+        "REQUEST_LOG_INCLUDE_PREFIXES",
+        "/orders,/pagamentos,/products,/clients,/reservas,/users"
+    )
+
 
 settings = Settings()

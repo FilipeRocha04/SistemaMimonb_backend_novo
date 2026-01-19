@@ -2,21 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.user import User as UserModel
 from app.schemas.user import UserRead
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
+@router.get("", response_model=List[UserRead])
 @router.get("/", response_model=List[UserRead])
 def list_users(db: Session = Depends(get_db)):
     try:

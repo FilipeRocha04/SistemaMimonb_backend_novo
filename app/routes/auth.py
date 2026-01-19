@@ -5,19 +5,14 @@ from datetime import timedelta
 
 from app.schemas.user import UserCreate, UserRead, Token, UserUpdate, LoginRequest, ForgotPasswordRequest
 from app.services import auth as auth_service
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.user import User as UserModel
 from app.db import session as db_session
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
 @router.post("/register", response_model=UserRead)

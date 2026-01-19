@@ -14,6 +14,8 @@ class Pedido(Base):
     subtotal = Column(Numeric(12, 2), nullable=False, default=0.0)
     adicional_10 = Column(SmallInteger, nullable=False, default=0)  # 0 or 1
     valor_total = Column(Numeric(12, 2), nullable=False, default=0.0)
+    # Data (dia) da venda/pedido, independente de estar pago
+    data = Column(Date, nullable=True)
     observacao = Column(Text, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     # relationship to items (PedidoItem)

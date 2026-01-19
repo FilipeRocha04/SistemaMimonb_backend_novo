@@ -16,7 +16,8 @@ class ReservaBase(BaseModel):
     data_reserva: date
     hora_reserva: time
     quantidade_pessoas: int
-    status: ReservaStatus = ReservaStatus.pendente
+    # Default new reservations to 'confirmada' per requested behavior
+    status: ReservaStatus = ReservaStatus.confirmada
     observacao: Optional[str] = None
 
 

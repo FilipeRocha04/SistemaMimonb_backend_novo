@@ -9,7 +9,7 @@ from fastapi.security import OAuth2PasswordBearer
 
 from app.core.config import settings
 from app.models.user import User
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from sqlalchemy import select, or_
 
 # Use a scheme without the 72-byte password limit as the preferred hashing algorithm.
@@ -18,12 +18,7 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
 def verify_password(plain_password, hashed_password):

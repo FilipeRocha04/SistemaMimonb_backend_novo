@@ -2,21 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.client import Cliente as ClienteModel
 from app.schemas.client import ClienteCreate, ClienteRead
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Use shared get_db from app.db.session
 
 
+@router.post("", response_model=ClienteRead)
 @router.post("/", response_model=ClienteRead)
 def create_client(payload: ClienteCreate, db: Session = Depends(get_db)):
     try:
@@ -30,6 +26,7 @@ def create_client(payload: ClienteCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("", response_model=List[ClienteRead])
 @router.get("/", response_model=List[ClienteRead])
 def list_clients(db: Session = Depends(get_db)):
     try:
