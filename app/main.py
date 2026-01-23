@@ -206,7 +206,8 @@ APP_ENV = os.getenv("APP_ENV", "development")
 
 if APP_ENV == "production":
     cors_origins = [
-        "https://mimonbforneria.projetosapp.com.br"
+        "https://mimonbforneria.projetosapp.com.br",
+        "https://www.mimonbforneria.projetosapp.com.br",
     ]
 else:
     cors_origins = [
