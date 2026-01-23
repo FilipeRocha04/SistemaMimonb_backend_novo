@@ -1087,8 +1087,9 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             price = base_price
             obs = it.get('observation') or it.get('observacao')
             prod_id = it.get('id')
+            remessa_id = it.get('remessa_id')
             from app.models.pedido_item import PedidoItem as PI
-            item_model = PI(produto_id=prod_id, nome=name, quantidade=qty, preco=price, observacao=obs, status='pendente')
+            item_model = PI(produto_id=prod_id, nome=name, quantidade=qty, preco=price, observacao=obs, status='pendente', remessa_id=remessa_id)
             order.items.append(item_model)
             added.append(item_model)
 
@@ -1463,6 +1464,11 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
         if 'price' in payload:
             try:
                 item.preco = float(payload['price'])
+            except Exception:
+                pass
+        if 'status' in payload:
+            try:
+                item.status = str(payload['status'])
             except Exception:
                 pass
         # support explicit price factor (e.g., meia pizza)
