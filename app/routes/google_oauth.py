@@ -1,71 +1,93 @@
-
-
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from starlette.config import Config
-from starlette.requests import Request as StarletteRequest
-import os
 from jose import jwt
 from sqlalchemy.orm import Session
+import os
+
 from app.db.session import SessionLocal
 from app.models.user import User as UserModel, RoleEnum
 from app.services.auth import create_access_token
 
 router = APIRouter(prefix="/auth/google", tags=["OAuth"])
 
-# Carregar variáveis do .env
-config = Config('.env')
+# =========================
+# ENV
+# =========================
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-oauth = OAuth(config)
+oauth = OAuth()
 oauth.register(
-    name='google',
-    client_id=os.getenv('GOOGLE_CLIENT_ID'),
-    client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    name="google",
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
     client_kwargs={
-        'scope': 'openid email profile'
-    }
+        "scope": "openid email profile"
+    },
 )
 
-@router.get('/login')
+# =========================
+# ROUTES
+# =========================
+@router.get("/login")
 async def login_via_google(request: Request):
-    redirect_uri = request.url_for('auth_google_callback')
-    # Força o Google a mostrar seleção de conta
-    return await oauth.google.authorize_redirect(request, redirect_uri, prompt="select_account")
+    redirect_uri = request.url_for("auth_google_callback")
+    return await oauth.google.authorize_redirect(
+        request,
+        redirect_uri,
+        prompt="select_account"
+    )
 
 
-
-
-@router.get('/callback')
+@router.get("/callback", name="auth_google_callback")
 async def auth_google_callback(request: Request):
     try:
         token = await oauth.google.authorize_access_token(request)
-        print("TOKEN GOOGLE:", token)
-        if 'id_token' not in token:
-            raise HTTPException(status_code=400, detail=f"id_token não retornado pelo Google. Token: {token}")
-        user_info = jwt.get_unverified_claims(token['id_token'])
-    except OAuthError as error:
-        raise HTTPException(status_code=400, detail=f"Erro no login Google: {error.error}")
 
-    # Busca/cria usuário no banco
+        if "id_token" not in token:
+            raise HTTPException(
+                status_code=400,
+                detail="id_token não retornado pelo Google"
+            )
+
+        user_info = jwt.get_unverified_claims(token["id_token"])
+
+    except OAuthError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erro no login Google: {error.error}"
+        )
+
+    email = user_info.get("email")
+    username = email.split("@")[0]
+
     db: Session = SessionLocal()
-    email = user_info.get('email')
-    name = user_info.get('name')
-    username = email.split('@')[0] if email else None
+
     user = db.query(UserModel).filter(UserModel.email == email).first()
+
     if not user:
-        # Cria usuário novo com papel padrão garcom
-        papel = RoleEnum.garcom
-        user = UserModel(email=email, username=username, senha_hash='google_oauth', papel=papel)
+        user = UserModel(
+            email=email,
+            username=username,
+            senha_hash="google_oauth",
+            papel=RoleEnum.garcom
+        )
         db.add(user)
         db.commit()
         db.refresh(user)
 
-    # Se o usuário já existe, mantém o papel cadastrado (admin, garcom, etc)
-    papel = user.papel.value if hasattr(user.papel, 'value') else user.papel
-    access_token = create_access_token({"sub": user.email, "papel": papel, "username": user.username})
+    papel = user.papel.value if hasattr(user.papel, "value") else user.papel
 
-    # Redireciona para o frontend com o token
-    frontend_url = f"http://localhost:8080/dashboard?access_token={access_token}"
-    return RedirectResponse(frontend_url)
+    access_token = create_access_token({
+        "sub": user.email,
+        "papel": papel,
+        "username": user.username,
+    })
+
+    # ✅ redireciona para o frontend correto
+    redirect_url = f"{FRONTEND_URL}/dashboard?access_token={access_token}"
+
+    return RedirectResponse(url=redirect_url)

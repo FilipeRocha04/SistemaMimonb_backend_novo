@@ -210,8 +210,6 @@ if APP_ENV == "production":
     ]
 else:
     cors_origins = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
@@ -289,10 +287,6 @@ app.include_router(uploads_routes.router)
 app.include_router(despesas_routes.router)
 app.include_router(reservas_routes.router)
 app.include_router(orders_routes.router)
-app.include_router(kitchen_routes.router)
-app.include_router(pagamentos_routes.router)
-app.include_router(users_routes.router)
-app.include_router(stats_routes.router)
 app.include_router(google_oauth.router)
 app.include_router(produtos_precos_quantidade_routes.router)
 

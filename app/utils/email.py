@@ -104,10 +104,12 @@ def build_verification_email(to_email: str, verify_url: str, subject: Optional[s
     msg.add_alternative(html, subtype="html", charset="utf-8")
     return msg
 
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://mimonbforneria.projetosapp.com.br")
+
 def send_reset_email_sync(to_email: str, reset_url: str):
     # Garante que o reset_url seja sempre a URL completa
     if not reset_url.startswith("http"):
-        reset_url = f"http://localhost:8080/reset-password?token={reset_url}"
+        reset_url = f"{FRONTEND_URL}/reset-password?token={reset_url}"
     msg = build_reset_email(to_email, reset_url)
     try:
         asyncio.run(_send_message(msg))
@@ -121,7 +123,7 @@ def send_reset_email_sync(to_email: str, reset_url: str):
 def send_verification_email_sync(to_email: str, verify_url: str):
     # Garante que o verify_url seja sempre a URL completa
     if not verify_url.startswith("http"):
-        verify_url = f"http://localhost:8080/verify?token={verify_url}"
+        verify_url = f"{FRONTEND_URL}/verify?token={verify_url}"
     msg = build_verification_email(to_email, verify_url)
     try:
         asyncio.run(_send_message(msg))
