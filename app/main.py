@@ -1,4 +1,7 @@
+# Adiciona SessionMiddleware para OAuth
+import os
 from fastapi import FastAPI, Request
+from starlette.middleware.sessions import SessionMiddleware
 # Load .env automatically so environment variables defined in backend/.env are
 # available when running uvicorn without --env-file. This keeps local dev simpler.
 try:
@@ -20,12 +23,14 @@ from app.routes import kitchen as kitchen_routes
 from app.routes import pagamentos as pagamentos_routes
 from app.routes import users as users_routes
 from app.routes import stats as stats_routes
+from app.routes import google_oauth
 from app.db import session as db_session
 from app.core.config import settings
 import logging
 import threading
 from collections import defaultdict
 import time
+from app.routes import produtos_precos_quantidade as produtos_precos_quantidade_routes
 
 app = FastAPI(
     title="API Backend - FastAPI",
@@ -131,6 +136,12 @@ async def request_count_middleware(request: Request, call_next):
     return response
 
 # Configure CORS for local frontend dev (Vite default localhost:8080). Adjust in production.
+# Configure CORS for local frontend dev (Vite default localhost:8080). Adjust in production.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ["SECRET_KEY"]
+)
+
 app.add_middleware(
     CORSMiddleware,
     # include Vite default port (5173) commonly used in frontend dev
@@ -139,6 +150,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(health.router)
 app.include_router(auth_routes.router)
@@ -152,6 +164,8 @@ app.include_router(kitchen_routes.router)
 app.include_router(pagamentos_routes.router)
 app.include_router(users_routes.router)
 app.include_router(stats_routes.router)
+app.include_router(google_oauth.router)
+app.include_router(produtos_precos_quantidade_routes.router)
 
 
 @app.on_event("startup")

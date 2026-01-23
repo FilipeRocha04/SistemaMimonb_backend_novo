@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean
 from sqlalchemy.sql import func
 from app.db.session import Base
 
@@ -11,4 +11,5 @@ class Cliente(Base):
     telefone = Column(String(50), nullable=True)
     endereco = Column(String(500), nullable=True)
     observacoes = Column(Text, nullable=True)
+    ativo = Column(Boolean, nullable=False, default=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

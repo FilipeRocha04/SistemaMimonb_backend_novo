@@ -10,12 +10,8 @@ class PedidoItem(BaseModel):
     # produto_id do item, usado para resolver categoria
     produto_id: Optional[int] = None
     name: str
-    quantity: int
+    quantity: float
     price: float
-    # quando verdadeiro, aplica metade do preço do produto no momento da venda
-    metade: Optional[bool] = None
-    # fator aplicado ao preço base (ex.: 0.5 para meia). Somente leitura em respostas
-    preco_fator: Optional[float] = None
     observation: Optional[str] = None
     # categoria/categoria normalizada vinda do backend
     categoria: Optional[str] = None
@@ -49,6 +45,7 @@ class PedidoRead(BaseModel):
     cliente_id: Optional[int]
     cliente_nome: Optional[str] = None
     usuario_id: Optional[int]
+    mesa: Optional[str] = None
     tipo: Optional[str]
     status: Optional[str]
     subtotal: float

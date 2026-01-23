@@ -81,32 +81,6 @@ def resolve_current_price_for_item(it_like, db: Session) -> float:
         return 0.0
 
 
-def factor_for_item(it_like) -> float:
-    """Return the price factor for an incoming item.
-
-    - If `preco_fator` provided and valid (0 < f <= 1.0), use it.
-    - Else if `metade`/`half` truthy, return 0.5.
-    - Otherwise 1.0.
-    """
-    try:
-        f = (
-            getattr(it_like, 'preco_fator', None)
-            or (it_like.get('preco_fator') if isinstance(it_like, dict) else None)
-        )
-        if f is not None:
-            f = float(f)
-            if f > 0 and f <= 1.0:
-                return f
-        half = (
-            getattr(it_like, 'metade', None)
-            or (it_like.get('metade') if isinstance(it_like, dict) else None)
-            or (it_like.get('half') if isinstance(it_like, dict) else None)
-        )
-        if bool(half):
-            return 0.5
-    except Exception:
-        pass
-    return 1.0
 
 
 def resolve_categoria_for_item(item, db: Session):
@@ -329,6 +303,7 @@ def to_brasilia(dt):
 async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
     try:
         # map incoming payload to existing pedidos table columns
+        # Determine initial remessa type from payload.delivery; do not persist on Pedido
         tipo = 'delivery' if getattr(payload, 'delivery', False) else 'local'
         # Do not trust client-provided totals; compute from item snapshots
         subtotal = 0.0
@@ -346,7 +321,8 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         p = PedidoModel(
             cliente_id=payload.cliente_id,
             usuario_id=None,
-            tipo=tipo,
+            mesa=getattr(payload, 'mesa_numero', None),
+            # Stop using pedidos.tipo; keep DB default and use remessa.tipo instead
             status=map_incoming_status(getattr(payload, 'status', None)),
             subtotal=0.0,
             adicional_10=adicional_10,
@@ -360,19 +336,35 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         for it in items_payload:
             # handle both pydantic objects and plain dicts
             name = getattr(it, 'name', None) or (it.get('name') if isinstance(it, dict) else None) or (it.get('nome') if isinstance(it, dict) else None)
-            qty = int(getattr(it, 'quantity', None) or (it.get('quantity') if isinstance(it, dict) else None) or (it.get('qty') if isinstance(it, dict) else 1) or 1)
+            # Corrige: aceita valores fracionados corretamente, sem sobrescrever 0.5 para 1 ou 0
+            qty_raw = getattr(it, 'quantity', None)
+            if qty_raw is None and isinstance(it, dict):
+                qty_raw = it.get('quantity', None)
+            if qty_raw is None and isinstance(it, dict):
+                qty_raw = it.get('qty', None)
+            try:
+                if isinstance(qty_raw, str) and "/" in qty_raw:
+                    num, denom = qty_raw.split("/")
+                    qty = float(num) / float(denom)
+                else:
+                    qty = float(qty_raw)
+                if qty < 0.01:
+                    continue  # ignora itens com quantidade zero ou negativa
+            except Exception:
+                continue  # ignora itens com quantidade inválida
             # Snapshot price from produtos at creation time
             base_price = resolve_current_price_for_item(it, db)
-            f = factor_for_item(it)
-            price = base_price * f
+            # Se for metade, quantidade já será 0.5, então só multiplicar pelo preço unitário
+            price = base_price
             obs = getattr(it, 'observation', None) or (it.get('observation') if isinstance(it, dict) else None) or (it.get('observacao') if isinstance(it, dict) else None)
             prod_id = getattr(it, 'id', None) or (it.get('id') if isinstance(it, dict) else None)
-            item_model = PedidoItem(produto_id=prod_id, nome=name or '', quantidade=qty, preco=price, preco_fator=f, observacao=obs, status='pendente')
-            p.items.append(item_model)
-            try:
-                subtotal += float(price) * int(qty)
-            except Exception:
-                pass
+            if qty > 0:
+                item_model = PedidoItem(produto_id=prod_id, nome=name or '', quantidade=qty, preco=price, observacao=obs, status='pendente')
+                p.items.append(item_model)
+                try:
+                    subtotal += float(price) * float(qty)
+                except Exception:
+                    pass
 
         db.add(p)
         db.commit()
@@ -392,27 +384,29 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         except Exception:
             pass
 
-        # if the client provided a per-remessa observation or a delivery address,
-        # persist it to pedido_remessas (per-remessa rows can hold endereco and observacao)
+        # Always create an initial remessa for the order and store type there
         try:
             rem_obs = getattr(payload, 'remessa_observacao', None)
             delivery_addr = getattr(payload, 'deliveryAddress', None)
-            if rem_obs or delivery_addr:
-                # model uses observacao_remessa column; map incoming remessa_observacao to that column
-                pr = PedidoRemessaModel(pedido_id=p.id, observacao_remessa=rem_obs, endereco=delivery_addr)
-                db.add(pr)
+            pr = PedidoRemessaModel(
+                pedido_id=p.id,
+                observacao_remessa=rem_obs,
+                endereco=delivery_addr,
+                tipo=tipo,
+            )
+            db.add(pr)
+            db.commit()
+            db.refresh(pr)
+            # associate all current items of this newly created order to this remessa
+            try:
+                # load fresh items and set their remessa_id
+                items_rows = db.query(PedidoItem).filter(PedidoItem.pedido_id == p.id).all()
+                for it_row in items_rows:
+                    it_row.remessa_id = pr.id
+                    db.add(it_row)
                 db.commit()
-                db.refresh(pr)
-                # associate all current items of this newly created order to this remessa
-                try:
-                    # load fresh items and set their remessa_id
-                    items_rows = db.query(PedidoItem).filter(PedidoItem.pedido_id == p.id).all()
-                    for it_row in items_rows:
-                        it_row.remessa_id = pr.id
-                        db.add(it_row)
-                    db.commit()
-                except Exception:
-                    db.rollback()
+            except Exception:
+                db.rollback()
         except Exception:
             # non-fatal: don't block order creation if remessa persistence fails
             db.rollback()
@@ -479,7 +473,15 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             rem_rows = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == p.id).order_by(PedidoRemessaModel.id.asc()).all()
             # build remessas list
             for rr in rem_rows:
-                remessas_list.append({'id': rr.id, 'pedido_id': getattr(rr, 'pedido_id', None), 'observacao': getattr(rr, 'observacao_remessa', None), 'endereco': getattr(rr, 'endereco', None), 'status': getattr(rr, 'status', 'pendente'), 'criado_em': to_brasilia(rr.criado_em)})
+                remessas_list.append({
+                    'id': rr.id,
+                    'pedido_id': getattr(rr, 'pedido_id', None),
+                    'observacao': getattr(rr, 'observacao_remessa', None),
+                    'endereco': getattr(rr, 'endereco', None),
+                    'tipo': getattr(rr, 'tipo', 'local'),
+                    'status': getattr(rr, 'status', 'pendente'),
+                    'criado_em': to_brasilia(rr.criado_em)
+                })
         except Exception:
             remessas_list = []
             
@@ -488,7 +490,8 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             'id': p.id,
             'cliente_id': p.cliente_id,
             'usuario_id': p.usuario_id,
-            'tipo': p.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': p.status,
             'subtotal': float(p.subtotal or 0),
             'adicional_10': int(p.adicional_10 or 0),
@@ -506,7 +509,6 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                     'quantity': it.quantidade,
                     'price': float(it.preco),
                     'observation': it.observacao,
-                    'preco_fator': float(getattr(it, 'preco_fator', 1) or 1),
                     'categoria': resolve_categoria_for_item(it, db),
                     'category': resolve_categoria_for_item(it, db),
                 }
@@ -574,7 +576,9 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 'cliente_id': r.cliente_id,
                 'cliente_nome': getattr(r.cliente, 'nome', None) if getattr(r, 'cliente', None) else None,
                 'usuario_id': r.usuario_id,
-                'tipo': r.tipo,
+                'mesa': getattr(r, 'mesa', None),
+                # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+                'tipo': None,
                 'status': r.status,
                 'subtotal': float(r.subtotal or 0),
                 'adicional_10': int(r.adicional_10 or 0),
@@ -591,7 +595,6 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                         'quantity': it.quantidade,
                         'price': float(it.preco),
                         'observation': it.observacao,
-                        'preco_fator': float(getattr(it, 'preco_fator', 1) or 1),
                         'categoria': resolve_categoria_for_item(it, db),
                         'category': resolve_categoria_for_item(it, db),
                     }
@@ -612,6 +615,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                         'pedido_id': getattr(rr, 'pedido_id', None),
                         'observacao': getattr(rr, 'observacao_remessa', None),
                         'endereco': getattr(rr, 'endereco', None),
+                        'tipo': getattr(rr, 'tipo', 'local'),
                         'status': getattr(rr, 'status', 'pendente'),
                         # use remessa creation time, not the pedido time
                         'criado_em': to_brasilia(rr.criado_em),
@@ -655,7 +659,9 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             'cliente_id': r.cliente_id,
             'cliente_nome': getattr(r.cliente, 'nome', None) if getattr(r, 'cliente', None) else None,
             'usuario_id': r.usuario_id,
-            'tipo': r.tipo,
+            'mesa': getattr(r, 'mesa', None),
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': r.status,
             'subtotal': float(r.subtotal or 0),
             'adicional_10': int(r.adicional_10 or 0),
@@ -672,7 +678,6 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
                     'quantity': it.quantidade,
                     'price': float(it.preco),
                         'observation': it.observacao,
-                        'preco_fator': float(getattr(it, 'preco_fator', 1) or 1),
                     'categoria': resolve_categoria_for_item(it, db),
                     'category': resolve_categoria_for_item(it, db),
                 }
@@ -689,6 +694,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
                     'pedido_id': getattr(rr, 'pedido_id', None),
                     'observacao': getattr(rr, 'observacao_remessa', None),
                     'endereco': getattr(rr, 'endereco', None),
+                    'tipo': getattr(rr, 'tipo', 'local'),
                     'status': getattr(rr, 'status', 'pendente'),
                     'criado_em': to_brasilia(rr.criado_em),
                 }
@@ -767,7 +773,9 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
 
         # determine requested status (allow frontend to request 'pronto')
         requested_status = payload.get('status') or payload.get('status_remessa') or 'pendente'
-        pr = PedidoRemessaModel(pedido_id=order.id, observacao_remessa=observacao, endereco=endereco, status=requested_status)
+        # tipo da remessa deve ser definido explicitamente no payload; padrão 'local'
+        remessa_tipo = payload.get('tipo') or 'local'
+        pr = PedidoRemessaModel(pedido_id=order.id, observacao_remessa=observacao, endereco=endereco, status=requested_status, tipo=remessa_tipo)
         db.add(pr)
         db.commit()
         db.refresh(pr)
@@ -851,7 +859,8 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
             'id': order.id,
             'cliente_id': order.cliente_id,
             'usuario_id': order.usuario_id,
-            'tipo': order.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
@@ -883,6 +892,7 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
                     'pedido_id': getattr(rr, 'pedido_id', None),
                     'observacao': getattr(rr, 'observacao_remessa', None),
                     'endereco': getattr(rr, 'endereco', None),
+                    'tipo': getattr(rr, 'tipo', 'local'),
                     'status': getattr(rr, 'status', 'pendente'),
                     'criado_em': to_brasilia(rr.criado_em),
                 }
@@ -1001,7 +1011,8 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
             'id': order.id,
             'cliente_id': order.cliente_id,
             'usuario_id': order.usuario_id,
-            'tipo': order.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
@@ -1032,6 +1043,7 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
                     'pedido_id': getattr(rr, 'pedido_id', None),
                     'observacao': getattr(rr, 'observacao_remessa', None),
                     'endereco': getattr(rr, 'endereco', None),
+                    'tipo': getattr(rr, 'tipo', 'local'),
                     'status': getattr(rr, 'status', 'pendente'),
                     'criado_em': to_brasilia(rr.criado_em),
                 }
@@ -1072,12 +1084,11 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             qty = int(it.get('quantity') or it.get('qty') or 1)
             # Snapshot price at the moment of addition
             base_price = resolve_current_price_for_item(it, db)
-            f = factor_for_item(it)
-            price = base_price * f
+            price = base_price
             obs = it.get('observation') or it.get('observacao')
             prod_id = it.get('id')
             from app.models.pedido_item import PedidoItem as PI
-            item_model = PI(produto_id=prod_id, nome=name, quantidade=qty, preco=price, preco_fator=f, observacao=obs, status='pendente')
+            item_model = PI(produto_id=prod_id, nome=name, quantidade=qty, preco=price, observacao=obs, status='pendente')
             order.items.append(item_model)
             added.append(item_model)
 
@@ -1219,7 +1230,8 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             'id': order.id,
             'cliente_id': order.cliente_id,
             'usuario_id': order.usuario_id,
-            'tipo': order.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
@@ -1235,7 +1247,6 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
                     'quantity': it.quantidade,
                     'price': float(it.preco),
                         'observation': it.observacao,
-                        'preco_fator': float(getattr(it, 'preco_fator', 1) or 1),
                     'categoria': resolve_categoria_for_item(it, db),
                     'category': resolve_categoria_for_item(it, db),
                 }
@@ -1385,7 +1396,8 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
             'cliente_id': order.cliente_id,
             'cliente_nome': getattr(order.cliente, 'nome', None) if getattr(order, 'cliente', None) else None,
             'usuario_id': order.usuario_id,
-            'tipo': order.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
@@ -1401,7 +1413,6 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
                     'quantity': it.quantidade,
                     'price': float(it.preco),
                         'observation': it.observacao,
-                        'preco_fator': float(getattr(it, 'preco_fator', 1) or 1),
                     'categoria': resolve_categoria_for_item(it, db),
                     'category': resolve_categoria_for_item(it, db),
                 }
@@ -1420,9 +1431,11 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
 
 @router.patch("/{order_id}/items/{item_id}", response_model=PedidoRead)
 async def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: Session = Depends(get_db)):
-    """Update quantity (or price) of an order item and recompute totals.
+    """Update quantity, price, or price factor of an order item and recompute totals.
 
-    Expected payload: { quantity: int, price?: float }
+    Expected payload:
+        - { quantity: int }
+        - { price?: float }
     """
     try:
         order = db.query(PedidoModel).options(joinedload(PedidoModel.items)).filter(PedidoModel.id == order_id).first()
@@ -1452,6 +1465,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
                 item.preco = float(payload['price'])
             except Exception:
                 pass
+        # support explicit price factor (e.g., meia pizza)
 
         # recompute subtotal and valor_total from remaining items (still mutable)
         subtotal = 0.0
@@ -1511,7 +1525,8 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
             'cliente_id': order.cliente_id,
             'cliente_nome': getattr(order.cliente, 'nome', None) if getattr(order, 'cliente', None) else None,
             'usuario_id': order.usuario_id,
-            'tipo': order.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
@@ -1527,7 +1542,6 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
                     'quantity': it.quantidade,
                     'price': float(it.preco),
                         'observation': it.observacao,
-                        'preco_fator': float(getattr(it, 'preco_fator', 1) or 1),
                     'categoria': resolve_categoria_for_item(it, db),
                     'category': resolve_categoria_for_item(it, db),
                 }
@@ -1712,7 +1726,8 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
             'cliente_id': order.cliente_id,
             'cliente_nome': getattr(order.cliente, 'nome', None) if getattr(order, 'cliente', None) else None,
             'usuario_id': order.usuario_id,
-            'tipo': order.tipo,
+            # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
+            'tipo': None,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),

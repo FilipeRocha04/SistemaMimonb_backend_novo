@@ -125,3 +125,5 @@ def presign_get(key: str):
         logger.exception("failed to generate presigned GET url for key=%s", key)
         raise HTTPException(status_code=500, detail="Erro ao gerar presigned GET URL")
     return {"presigned_url": presigned, "key": key}
+
+

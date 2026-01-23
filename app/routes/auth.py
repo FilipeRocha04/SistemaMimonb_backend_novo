@@ -2,14 +2,43 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import timedelta
+from pydantic import BaseModel
 
 from app.schemas.user import UserCreate, UserRead, Token, UserUpdate, LoginRequest, ForgotPasswordRequest
 from app.services import auth as auth_service
 from app.db.session import get_db
 from app.models.user import User as UserModel
-from app.db import session as db_session
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    from app.services import auth as auth_service_module
+    from app.models.user import User as UserModel
+    import logging
+    try:
+        # Decodifica o token e valida ação
+        data = auth_service_module.decode_token(payload.token)
+        if not data or data.get("action") != "reset":
+            raise Exception("Token inválido ou expirado")
+        email = data.get("sub")
+        if not email:
+            raise Exception("Token inválido")
+        user = db.query(UserModel).filter(UserModel.email == email).first()
+        if not user:
+            raise Exception("Usuário não encontrado")
+        # Atualiza a senha
+        user.senha_hash = auth_service_module.get_password_hash(payload.password)
+        db.commit()
+        return {"ok": True, "message": "Senha redefinida com sucesso!"}
+    except Exception as e:
+        logging.getLogger('auth').warning(f'Falha ao redefinir senha: {e}')
+        return {"ok": False, "message": str(e)}
 
 
 # Use shared get_db from app.db.session
@@ -31,11 +60,23 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Nome de usuário já em uso")
 
     hashed = auth_service.get_password_hash(user_in.password)
-    # map to MySQL schema columns: username, senha_hash and papel
-    user = UserModel(email=user_in.email, username=getattr(user_in, 'username', None), senha_hash=hashed, papel=user_in.papel)
+    # Sempre define papel como 'garcom' ao criar usuário
+    user = UserModel(email=user_in.email, username=getattr(user_in, 'username', None), senha_hash=hashed, papel='garcom')
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Generate verification token and send email
+    from app.utils.email_utils import send_verification_email
+    from app.services import auth as auth_service_module
+    verification_token = auth_service_module.create_access_token({"sub": user.email, "action": "verify"}, expires_delta=timedelta(hours=24))
+    try:
+        send_verification_email(user.email, verification_token)
+    except Exception as e:
+        # Log or handle email sending failure, but do not block registration
+        import logging
+        logging.getLogger('auth').warning(f'Falha ao enviar email de verificação: {e}')
+
     return user
 
 
@@ -139,23 +180,26 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
 
 
 
+
 @router.post('/forgot-password')
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """Trigger a password reset flow.
 
     Security note: do NOT reveal whether the email exists. Return a generic message.
-    In a production system you would generate a short-lived reset token and send an email.
     """
+    from app.utils.email import send_reset_email_sync as send_reset_password_email
+    from app.services import auth as auth_service_module
     try:
         # look up user but don't reveal existence
         user = db.query(UserModel).filter(UserModel.email == payload.email).first()
         if user:
-            # TODO: generate reset token and send email. For now we just record a log entry.
+            # Generate reset token and send email
+            reset_token = auth_service_module.create_access_token({"sub": user.email, "action": "reset"}, expires_delta=timedelta(hours=1))
             try:
+                send_reset_password_email(user.email, reset_token)
+            except Exception as e:
                 import logging
-                logging.getLogger('auth').info(f'Password reset requested for {payload.email}')
-            except Exception:
-                pass
+                logging.getLogger('auth').warning(f'Falha ao enviar email de reset: {e}')
     except Exception:
         # swallow errors to avoid leaking details
         pass

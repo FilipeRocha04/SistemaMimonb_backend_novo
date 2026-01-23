@@ -9,7 +9,8 @@ class Pedido(Base):
     id = Column(BigInteger, primary_key=True, index=True)
     cliente_id = Column(BigInteger, ForeignKey('clientes.id'), nullable=True)
     usuario_id = Column(BigInteger, nullable=True)
-    tipo = Column(String(20), nullable=False, default='local')  # 'local' or 'delivery'
+    # Número da mesa (opcional)
+    mesa = Column(String(50), nullable=True)
     status = Column(String(50), nullable=False, default='pendente')
     subtotal = Column(Numeric(12, 2), nullable=False, default=0.0)
     adicional_10 = Column(SmallInteger, nullable=False, default=0)  # 0 or 1

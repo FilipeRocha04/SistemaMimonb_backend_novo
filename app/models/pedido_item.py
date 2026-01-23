@@ -13,10 +13,9 @@ class PedidoItem(Base):
     remessa_id = Column(BigInteger, ForeignKey('pedido_remessas.id'), nullable=True)
     produto_id = Column(BigInteger, nullable=True)
     nome = Column(String(255), nullable=False)
-    quantidade = Column(Integer, nullable=False, default=1)
+    quantidade = Column(Numeric(4, 2), nullable=False, default=1.0)
     preco = Column(Numeric(12, 2), nullable=False, default=0.0)
     # fator aplicado ao preço base do produto no momento da venda (ex.: 0.5 para meia pizza)
-    preco_fator = Column(Numeric(4, 2), nullable=False, default=1.0)
     observacao = Column(Text, nullable=True)
     # status de preparo do item: 'pendente' | 'pronto'
     status = Column(String(20), nullable=False, server_default='pendente')

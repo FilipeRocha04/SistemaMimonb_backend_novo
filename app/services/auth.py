@@ -1,3 +1,10 @@
+def decode_token(token: str):
+    """Decodifica um JWT usando a SECRET_KEY e ALGORITHM do sistema."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload
+    except JWTError as e:
+        return None
 from datetime import datetime, timedelta
 import uuid
 from typing import Optional

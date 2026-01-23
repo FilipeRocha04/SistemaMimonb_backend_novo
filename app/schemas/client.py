@@ -8,6 +8,7 @@ class ClienteCreate(BaseModel):
     telefone: Optional[str] = None
     endereco: Optional[str] = None
     observacoes: Optional[str] = None
+    ativo: Optional[bool] = True
 
 
 class ClienteRead(BaseModel):
@@ -16,6 +17,7 @@ class ClienteRead(BaseModel):
     telefone: Optional[str] = None
     endereco: Optional[str] = None
     observacoes: Optional[str] = None
+    ativo: Optional[bool] = True
     criado_em: Optional[datetime] = None
 
     class Config:

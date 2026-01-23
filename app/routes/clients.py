@@ -16,7 +16,13 @@ router = APIRouter(prefix="/clients", tags=["Clients"])
 @router.post("/", response_model=ClienteRead)
 def create_client(payload: ClienteCreate, db: Session = Depends(get_db)):
     try:
-        client = ClienteModel(nome=payload.nome, telefone=payload.telefone, endereco=payload.endereco, observacoes=payload.observacoes)
+        client = ClienteModel(
+            nome=payload.nome,
+            telefone=payload.telefone,
+            endereco=payload.endereco,
+            observacoes=payload.observacoes,
+            ativo=(payload.ativo if payload.ativo is not None else True),
+        )
         db.add(client)
         db.commit()
         db.refresh(client)
@@ -54,6 +60,9 @@ def update_client(client_id: int, payload: ClienteCreate, db: Session = Depends(
         client.telefone = payload.telefone
         client.endereco = payload.endereco
         client.observacoes = payload.observacoes
+        # allow toggling 'ativo' just like product activation
+        if hasattr(payload, 'ativo'):
+            client.ativo = bool(payload.ativo)
         db.add(client)
         db.commit()
         db.refresh(client)

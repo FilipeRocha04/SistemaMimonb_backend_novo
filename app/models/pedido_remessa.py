@@ -9,6 +9,8 @@ class PedidoRemessa(Base):
     pedido_id = Column(BigInteger, ForeignKey('pedidos.id'), nullable=False)
     observacao_remessa = Column(Text, nullable=True)
     endereco = Column(String(255), nullable=True)
+    # tipo da remessa: 'local' ou 'delivery'. Default para 'local'.
+    tipo = Column(String(20), nullable=False, server_default='local')
     # status of the remessa (pendente/pronto/etc). Default to 'pendente'.
     status = Column(String(20), nullable=False, server_default='pendente')
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

@@ -6,238 +6,412 @@ from datetime import datetime, timedelta
 from app.db.session import get_db
 from app.models.pagamento import Pagamento as PagamentoModel
 from app.models.pedido import Pedido as PedidoModel
+from app.models.pedido_item import PedidoItem as PedidoItemModel
 from app.core.timezone_utils import BRAZIL_TZ
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
 
-# Use shared get_db from app.db.session
-
-
+# =========================
+# WEEKLY REVENUE
+# =========================
 @router.get("/weekly_revenue")
 def weekly_revenue(db: Session = Depends(get_db)):
-    """
-    Weekly revenue (faturamento semanal) as the total value of orders sold in the
-    last 7 days, independent of payment status.
-
-    Implementation: sum of `pedidos.valor_total` where `pedidos.criado_em >= now - 7 days`.
-    Returns: { "weeklyRevenue": float }
-    """
     try:
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
+
         total = (
             db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
             .filter(PedidoModel.criado_em >= seven_days_ago)
             .scalar()
         )
-        try:
-            total_float = float(total)
-        except Exception:
-            total_float = 0.0
-        return {"weeklyRevenue": total_float}
+
+        return {"weeklyRevenue": float(total or 0)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =========================
+# MONTHLY REVENUE
+# =========================
 @router.get("/monthly_revenue")
 def monthly_revenue(db: Session = Depends(get_db)):
-    """
-    Monthly revenue (faturamento mensal) as the total value of orders sold in the
-    last 30 days, independent of payment status.
-
-    Implementation: sum of `pedidos.valor_total` where `pedidos.criado_em >= now - 30 days`.
-    Returns: { "monthlyRevenue": float }
-    """
     try:
         thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+
         total = (
             db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
             .filter(PedidoModel.criado_em >= thirty_days_ago)
             .scalar()
         )
-        try:
-            total_float = float(total)
-        except Exception:
-            total_float = 0.0
-        return {"monthlyRevenue": total_float}
+
+        return {"monthlyRevenue": float(total or 0)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =========================
+# DAILY REVENUE DETAILS
+# =========================
+@router.get("/daily_revenue_details")
+def daily_revenue_details(
+    startDate: str | None = None,
+    endDate: str | None = None,
+    db: Session = Depends(get_db),
+):
+    # -------------------------
+    # Date parsing helpers
+    # -------------------------
+    def parse_date(s: str | None):
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    sd = parse_date(startDate)
+    ed = parse_date(endDate)
+
+    if not sd and not ed:
+        today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
+        sd = ed = today
+
+    try:
+        day_key = func.coalesce(PedidoModel.data, func.date(PedidoModel.criado_em))
+
+        filters = []
+        if sd and ed:
+            filters.extend([day_key >= sd, day_key <= ed])
+        elif sd:
+            filters.append(day_key >= sd)
+        elif ed:
+            filters.append(day_key <= ed)
+
+        # -------------------------
+        # Comandas com 10% (adicional_10=1)
+        # -------------------------
+        comandas_10_count = (
+            db.query(func.count(PedidoModel.id))
+            .filter(*filters, PedidoModel.adicional_10 == 1)
+            .scalar() or 0
+        )
+        comandas_10_total = (
+            db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
+            .filter(*filters, PedidoModel.adicional_10 == 1)
+            .scalar() or 0
+        )
+
+        print(f"🔍 DEBUG - sd: {sd}, ed: {ed}")
+        print(f"🔍 DEBUG - filters: {filters}")
+
+        # ------------------------- 
+        # Orders summary
+        # -------------------------
+        total_revenue = (
+            db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
+            .filter(*filters)
+            .scalar()
+        ) or 0
+
+        order_count = (
+            db.query(func.count(PedidoModel.id))
+            .filter(*filters)
+            .scalar()
+        ) or 0
+
+        print(f"🔍 DEBUG - order_count: {order_count}")
+
+        total_revenue = float(total_revenue)
+        average_ticket = total_revenue / max(order_count, 1)
+
+        # -------------------------
+        # Top products
+        # -------------------------
+        items_q = (
+            db.query(
+                PedidoItemModel.nome.label("nome"),
+                func.coalesce(func.sum(PedidoItemModel.quantidade), 0).label("qty"),
+                func.coalesce(func.sum(PedidoItemModel.quantidade * PedidoItemModel.preco), 0).label("revenue"),
+            )
+            .join(PedidoModel, PedidoItemModel.pedido_id == PedidoModel.id)
+            .filter(*filters)
+            .group_by(PedidoItemModel.nome)
+            .order_by(func.coalesce(func.sum(PedidoItemModel.quantidade), 0).desc())
+        )
+
+        top_rows = items_q.limit(10).all()
+
+        top_products = [
+            {
+                "name": nome or "Produto",
+                "quantity": float(qty or 0),
+                "revenue": float(rev or 0),
+            }
+            for nome, qty, rev in top_rows
+        ]
+
+        print(f"🔍 DEBUG - top_products count: {len(top_products)}")
+
+        # -------------------------
+        # Items totals - VERSÃO SIMPLIFICADA
+        # -------------------------
+        total_lines = (
+            db.query(func.count(PedidoItemModel.id))
+            .join(PedidoModel, PedidoItemModel.pedido_id == PedidoModel.id)
+            .filter(*filters)
+            .scalar() or 0
+        )
+        total_lines = int(total_lines)
+
+        print(f"🔍 DEBUG - total_lines ANTES: {total_lines}")
+
+        # Teste SEM filtros para ver se encontra os itens
+        total_lines_sem_filtro = (
+            db.query(func.count(PedidoItemModel.id))
+            .join(PedidoModel, PedidoItemModel.pedido_id == PedidoModel.id)
+            .scalar() or 0
+        )
+        
+        print(f"🔍 DEBUG - total_lines SEM FILTRO: {total_lines_sem_filtro}")
+
+        # Verificar se o pedido_id 524 existe
+        pedido_existe = db.query(PedidoModel).filter(PedidoModel.id == 524).first()
+        print(f"🔍 DEBUG - Pedido 524 existe? {pedido_existe is not None}")
+        if pedido_existe:
+            print(f"🔍 DEBUG - Pedido 524 data: {pedido_existe.data}")
+            print(f"🔍 DEBUG - Pedido 524 criado_em: {pedido_existe.criado_em}")
+
+        # -------------------------
+        # Payment breakdown
+        # -------------------------
+        pays = (
+            db.query(
+                PagamentoModel.forma_pagamento.label("method"),
+                func.count(PagamentoModel.id).label("count"),
+                func.coalesce(func.sum(PagamentoModel.valor), 0).label("total"),
+            )
+            .join(PedidoModel, PagamentoModel.pedido == PedidoModel.id)
+            .filter(*filters)
+            .group_by(PagamentoModel.forma_pagamento)
+            .all()
+        )
+
+        payment_breakdown = [
+            {
+                "method": method or "outros",
+                "count": int(count or 0),
+                "total": float(total or 0),
+            }
+            for method, count, total in pays
+        ]
+
+        resp_date = sd.isoformat() if sd == ed else None
+
+        # Soma das quantidades para alinhar com PDF e frontend
+        items_sold = (
+            db.query(func.coalesce(func.sum(PedidoItemModel.quantidade), 0))
+            .join(PedidoModel, PedidoItemModel.pedido_id == PedidoModel.id)
+            .filter(*filters)
+            .scalar() or 0
+        )
+        # -------------------------
+        # Orders List detalhado
+        # -------------------------
+        pedidos = db.query(PedidoModel).filter(*filters).all()
+        orders_list = []
+        for pedido in pedidos:
+            cliente_nome = None
+            if hasattr(pedido, 'cliente') and pedido.cliente:
+                cliente_nome = getattr(pedido.cliente, 'nome', None)
+            itens = []
+            for item in getattr(pedido, 'items', []):
+                itens.append({
+                    "name": item.nome,
+                    "quantity": float(item.quantidade),
+                    "unitPrice": float(item.preco),
+                    "total": float(item.quantidade) * float(item.preco)
+                })
+            pagamento = db.query(PagamentoModel).filter(PagamentoModel.pedido == pedido.id).first()
+            payment_method = pagamento.forma_pagamento if pagamento else None
+            orders_list.append({
+                "id": pedido.id,
+                "customer": cliente_nome,
+                "items": itens,
+                "total": float(pedido.valor_total),
+                "paymentMethod": payment_method
+            })
+        return {
+            "date": resp_date,
+            "startDate": sd.isoformat() if sd else None,
+            "endDate": ed.isoformat() if ed else None,
+            "orders": {
+                "count": order_count,
+                "totalRevenue": total_revenue,
+                "averageTicket": average_ticket,
+            },
+            "items": {
+                "lines": total_lines,
+                "itemsSold": float(items_sold),
+            },
+            "comandas10": {
+                "count": int(comandas_10_count),
+                "total": float(comandas_10_total),
+            },
+            "topProducts": top_products,
+            "paymentBreakdown": payment_breakdown,
+            "ordersList": orders_list,
+        }
+    except Exception as e:
+        print(f"❌ ERROR: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================
+# DAILY REVENUE
+# =========================
 @router.get("/daily_revenue")
 def daily_revenue(db: Session = Depends(get_db)):
-    """
-    Daily revenue (faturamento diário): sum of `pedidos.valor_total` for today's date.
-
-    We prefer the `pedidos.data` (DATE) column for day-bound correctness.
-    For older rows where `data` may be NULL, also include rows where
-    DATE(`criado_em`) == today.
-    Returns: { "dailyRevenue": float }
-    """
     try:
-        try:
-            today = (datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date())
-        except Exception:
-            today = datetime.utcnow().date()
+        today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
 
         total = (
             db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
             .filter(
                 or_(
                     PedidoModel.data == today,
-                    and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == today)
+                    and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == today),
                 )
             )
             .scalar()
         )
-        try:
-            total_float = float(total)
-        except Exception:
-            total_float = 0.0
-        return {"dailyRevenue": total_float}
+
+        return {"dailyRevenue": float(total or 0)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/average_ticket")
-def average_ticket(startDate: str | None = None, endDate: str | None = None, allDates: bool = False, db: Session = Depends(get_db)):
-    """
-    Average Ticket (Ticket Médio): average of `pedidos.valor_total` over a period.
-
-        Period selection:
-        - If startDate/endDate (YYYY-MM-DD) are provided, use inclusive day bounds and filter by `pedidos.data`.
-            For rows where `data` is NULL, fall back to DATE(`criado_em`) within the same bounds.
-        - If allDates=true and no explicit dates, compute over all orders.
-        - Otherwise (default), compute for today using `pedidos.data == hoje` (or DATE(`criado_em`) when `data` is NULL).
-
-    Returns: { "averageTicket": float, "count": int }
-    """
+# =========================
+# DAILY REVENUE COMPARISON
+# =========================
+@router.get("/daily_revenue_comparison")
+def daily_revenue_comparison(db: Session = Depends(get_db)):
     try:
-        # Build base query
+        today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
+        yesterday = today - timedelta(days=1)
+
+        def total_for(day):
+            return (
+                db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
+                .filter(
+                    or_(
+                        PedidoModel.data == day,
+                        and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == day),
+                    )
+                )
+                .scalar()
+            ) or 0
+
+        t_total = float(total_for(today))
+        y_total = float(total_for(yesterday))
+
+        change_pct = ((t_total - y_total) / y_total * 100) if y_total > 0 else (100 if t_total > 0 else 0)
+
+        return {
+            "today": t_total,
+            "yesterday": y_total,
+            "changePct": round(change_pct, 2),
+            "isPositive": t_total >= y_total,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================
+# AVERAGE TICKET
+# =========================
+@router.get("/average_ticket")
+def average_ticket(
+    startDate: str | None = None,
+    endDate: str | None = None,
+    allDates: bool = False,
+    db: Session = Depends(get_db),
+):
+    try:
         q = db.query(PedidoModel)
 
-        # Apply date filters when provided
         if startDate or endDate:
-            # Use inclusive bounds on DATE(columns)
-            # Convert strings to date objects
-            try:
-                sd = (datetime.strptime(startDate, "%Y-%m-%d").date() if startDate else None)
-            except Exception:
-                sd = None
-            try:
-                ed = (datetime.strptime(endDate, "%Y-%m-%d").date() if endDate else None)
-            except Exception:
-                ed = None
+            sd = datetime.strptime(startDate, "%Y-%m-%d").date() if startDate else None
+            ed = datetime.strptime(endDate, "%Y-%m-%d").date() if endDate else None
 
-            # Build filter conditions (inclusive)
-            conds = []
             if sd and ed:
-                conds.append(
+                q = q.filter(
                     or_(
                         and_(PedidoModel.data >= sd, PedidoModel.data <= ed),
                         and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) >= sd, func.date(PedidoModel.criado_em) <= ed),
                     )
                 )
-            elif sd:
-                conds.append(
-                    or_(
-                        PedidoModel.data >= sd,
-                        and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) >= sd),
-                    )
-                )
-            elif ed:
-                conds.append(
-                    or_(
-                        PedidoModel.data <= ed,
-                        and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) <= ed),
-                    )
-                )
-            if conds:
-                q = q.filter(*conds)
 
-        # Default filter: today when no dates and not allDates
         if not startDate and not endDate and not allDates:
-            try:
-                today = (datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date())
-            except Exception:
-                today = datetime.utcnow().date()
+            today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
             q = q.filter(
                 or_(
                     PedidoModel.data == today,
-                    and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == today)
+                    and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == today),
                 )
             )
 
         rows = q.all()
+        total = sum(float(r.valor_total or 0) for r in rows)
         count = len(rows)
-        total = 0.0
-        for r in rows:
-            try:
-                total += float(getattr(r, 'valor_total', 0) or 0)
-            except Exception:
-                pass
 
-        avg = (total / count) if count > 0 else 0.0
-        return {"averageTicket": float(avg), "count": int(count)}
+        return {
+            "averageTicket": total / count if count > 0 else 0,
+            "count": count,
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =========================
+# AVERAGE TICKET PER DAY
+# =========================
 @router.get("/average_ticket_per_day")
-def average_ticket_per_day(startDate: str | None = None, endDate: str | None = None, db: Session = Depends(get_db)):
-    """
-    Average ticket grouped by day.
-
-    Rules:
-    - Day key uses `pedidos.data` when present, else DATE(`criado_em`).
-    - If startDate/endDate provided (YYYY-MM-DD), apply inclusive bounds on that same day key.
-    - Returns a list sorted by day ascending: [{ date: 'YYYY-MM-DD', averageTicket: float, count: int }].
-    """
+def average_ticket_per_day(
+    startDate: str | None = None,
+    endDate: str | None = None,
+    db: Session = Depends(get_db),
+):
     try:
-        # Parse input dates
-        try:
-            sd = (datetime.strptime(startDate, "%Y-%m-%d").date() if startDate else None)
-        except Exception:
-            sd = None
-        try:
-            ed = (datetime.strptime(endDate, "%Y-%m-%d").date() if endDate else None)
-        except Exception:
-            ed = None
+        sd = datetime.strptime(startDate, "%Y-%m-%d").date() if startDate else None
+        ed = datetime.strptime(endDate, "%Y-%m-%d").date() if endDate else None
 
-        # Day key: COALESCE(pedidos.data, DATE(pedidos.criado_em))
         day_key = func.coalesce(PedidoModel.data, func.date(PedidoModel.criado_em))
 
         q = db.query(
-            day_key.label('dia'),
-            func.coalesce(func.avg(PedidoModel.valor_total), 0).label('avg_valor'),
-            func.count(PedidoModel.id).label('count_pedidos'),
+            day_key.label("dia"),
+            func.coalesce(func.avg(PedidoModel.valor_total), 0),
+            func.count(PedidoModel.id),
         )
 
-        # Apply bounds on the same day key (inclusive)
         if sd and ed:
             q = q.filter(day_key >= sd, day_key <= ed)
-        elif sd:
-            q = q.filter(day_key >= sd)
-        elif ed:
-            q = q.filter(day_key <= ed)
 
         q = q.group_by(day_key).order_by(day_key.asc())
+
         rows = q.all()
-        out = []
-        for dia, avg_valor, count_pedidos in rows:
-            try:
-                # dia may be a datetime.date or string depending on dialect
-                if hasattr(dia, 'isoformat'):
-                    date_str = dia.isoformat()
-                else:
-                    date_str = str(dia)
-                out.append({
-                    'date': date_str,
-                    'averageTicket': float(avg_valor or 0),
-                    'count': int(count_pedidos or 0),
-                })
-            except Exception:
-                pass
-        return { 'days': out }
+
+        return {
+            "days": [
+                {
+                    "date": dia.isoformat() if hasattr(dia, "isoformat") else str(dia),
+                    "averageTicket": float(avg or 0),
+                    "count": int(count or 0),
+                }
+                for dia, avg, count in rows
+            ]
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
