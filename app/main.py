@@ -288,6 +288,7 @@ app.include_router(uploads_routes.router)
 app.include_router(despesas_routes.router)
 app.include_router(reservas_routes.router)
 app.include_router(orders_routes.router)
+app.include_router(pagamentos_routes.router)
 app.include_router(google_oauth.router)
 app.include_router(produtos_precos_quantidade_routes.router)
 
