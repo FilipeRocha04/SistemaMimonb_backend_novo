@@ -44,7 +44,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
 # Use shared get_db from app.db.session
 
 
-@router.post("/register", response_model=UserRead)
+@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     # check existing
     if db.query(UserModel).filter(UserModel.email == user_in.email).first():
@@ -283,7 +283,8 @@ def list_users_debug(db: Session = Depends(get_db)):
 def db_info():
     # return which DB URL the app is using and engine info for debugging
     try:
-        engine_url = str(db_session.engine.url)
+        from app.db.session import engine
+        engine_url = str(engine.url)
     except Exception:
         engine_url = None
     return {"settings_database_url": getattr(auth_service, 'settings', {}).DATABASE_URL if hasattr(auth_service, 'settings') else None,

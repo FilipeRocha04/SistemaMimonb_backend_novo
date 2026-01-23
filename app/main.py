@@ -32,6 +32,9 @@ from collections import defaultdict
 import time
 from app.routes import produtos_precos_quantidade as produtos_precos_quantidade_routes
 
+# Define request logger for middleware logging
+_req_logger = logging.getLogger("request_logger")
+
 app = FastAPI(
     title="API Backend - FastAPI",
     version="1.0.0",
@@ -41,45 +44,18 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
-# Configure logging level from env
-logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL, logging.INFO))
-# Use a dedicated app logger to avoid uvicorn.access formatter expectations
-_req_logger = logging.getLogger("app.request")
-_req_logger.setLevel(getattr(logging, settings.LOG_LEVEL, logging.INFO))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+## ...existing code...
 
-# In-memory request counters per route (method + path), guarded by a lock
-_request_counts = defaultdict(int)
-_req_lock = threading.Lock()
-_global_request_count = 0
-
-
+# Optional per-request verbose logging for CRUD routes
 @app.middleware("http")
-async def request_count_middleware(request: Request, call_next):
-    # Prefer the mounted route path template when available
-    path_template = None
-    try:
-        route = request.scope.get("route")
-        if route and hasattr(route, "path"):
-            path_template = route.path
-    except Exception:
-        path_template = None
-    key_path = path_template or request.url.path
-    key = f"{request.method} {key_path}"
-
-    # Increment counter before executing handler
-    with _req_lock:
-        _request_counts[key] += 1
-        count_val = _request_counts[key]
-        # track global count across all routes
-        global _global_request_count
-        _global_request_count += 1
-        global_count_val = _global_request_count
-
-    # Log every N hits to avoid spam
-    if count_val % settings.REQUEST_LOG_EVERY_N == 0:
-        _req_logger.info(f"Request count threshold reached: {key} -> {count_val} (global={global_count_val})")
-
-    # Optional per-request verbose logging for CRUD routes
+async def request_logging_middleware(request: Request, call_next):
     verbose = settings.REQUEST_LOG_VERBOSE
     prefixes = [p.strip() for p in (settings.REQUEST_LOG_INCLUDE_PREFIXES or "").split(",") if p.strip()]
 
@@ -116,7 +92,7 @@ async def request_count_middleware(request: Request, call_next):
                 path_qs = f"{path_full}?{qs}" if qs else path_full
                 # Always log at INFO so it's visible even when LOG_LEVEL=INFO
                 _req_logger.info(
-                    f"{request.method} {path_qs} -> {response.status_code} in {duration_ms}ms | route_count={count_val} global_count={global_count_val}"
+                    f"{request.method} {path_qs} -> {response.status_code} in {duration_ms}ms"
                 )
                 # Explicit Portuguese line for DB queries per request
                 try:

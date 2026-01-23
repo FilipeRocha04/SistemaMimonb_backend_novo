@@ -93,6 +93,16 @@ def list_reservas(
 
 
 @router.get("/{reserva_id}", response_model=ReservaRead)
+def obter_reserva(reserva_id: int, db: Session = Depends(get_db)):
+    try:
+        r = db.query(ReservaModel).filter(ReservaModel.id == reserva_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Reserva não encontrada")
+        return r
+    except Exception as e:
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=tb)
+
 def get_reserva(reserva_id: int, db: Session = Depends(get_db)):
     r = db.query(ReservaModel).filter(ReservaModel.id == reserva_id).first()
     if not r:
