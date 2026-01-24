@@ -1,3 +1,10 @@
+def create_reset_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(hours=1))
+    to_encode.update({"exp": expire})
+    to_encode.update({"jti": str(uuid.uuid4()), "type": "reset"})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
 def decode_token(token: str):
     """Decodifica um JWT usando a SECRET_KEY e ALGORITHM do sistema."""
     try:

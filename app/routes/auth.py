@@ -225,7 +225,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         user = db.query(UserModel).filter(UserModel.email == payload.email).first()
         if user:
             # Generate reset token and send email
-            reset_token = auth_service_module.create_access_token({"sub": user.email, "action": "reset"}, expires_delta=timedelta(hours=1))
+            reset_token = auth_service_module.create_reset_token({"sub": user.email, "action": "reset"}, expires_delta=timedelta(hours=1))
             try:
                 send_reset_password_email(user.email, reset_token)
             except Exception as e:
