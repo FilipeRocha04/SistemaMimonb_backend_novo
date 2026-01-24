@@ -22,7 +22,7 @@
 # from app.routes import kitchen as kitchen_routes
 # from app.routes import pagamentos as pagamentos_routes
 # from app.routes import users as users_routes
-# from app.routes import stats as stats_routes
+from app.routes import stats as stats_routes
 # from app.routes import google_oauth
 # from app.db import session as db_session
 # from app.core.config import settings
@@ -138,6 +138,8 @@
 # app.include_router(orders_routes.router)
 # app.include_router(kitchen_routes.router)
 # app.include_router(pagamentos_routes.router)
+# app.include_router(pagamentos_routes.router)
+app.include_router(stats_routes.router)
 # app.include_router(users_routes.router)
 # app.include_router(stats_routes.router)
 # app.include_router(google_oauth.router)
@@ -231,6 +233,9 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SECRET_KEY", "dev-secret-key"),
 )
+
+# Inclui o router de estatísticas
+app.include_router(stats_routes.router)
 
 # =========================
 # REQUEST LOGGING
