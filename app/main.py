@@ -139,7 +139,7 @@ from app.routes import stats as stats_routes
 # app.include_router(kitchen_routes.router)
 # app.include_router(pagamentos_routes.router)
 # app.include_router(pagamentos_routes.router)
-app.include_router(stats_routes.router)
+#app.include_router(stats_routes.router)
 # app.include_router(users_routes.router)
 # app.include_router(stats_routes.router)
 # app.include_router(google_oauth.router)
@@ -234,9 +234,6 @@ app.add_middleware(
     secret_key=os.getenv("SECRET_KEY", "dev-secret-key"),
 )
 
-# Inclui o router de estatísticas
-app.include_router(stats_routes.router)
-
 # =========================
 # REQUEST LOGGING
 # =========================
@@ -285,6 +282,10 @@ async def request_logging_middleware(request: Request, call_next):
 # =========================
 # ROUTES
 # =========================
+# =========================
+# ROUTES
+# =========================
+app.include_router(stats_routes.router)
 app.include_router(health.router)
 app.include_router(auth_routes.router)
 app.include_router(clients_routes.router)
@@ -296,9 +297,6 @@ app.include_router(orders_routes.router)
 app.include_router(pagamentos_routes.router)
 app.include_router(google_oauth.router)
 app.include_router(produtos_precos_quantidade_routes.router)
-
-# =========================
-# STARTUP
 # =========================
 @app.on_event("startup")
 def on_startup():
