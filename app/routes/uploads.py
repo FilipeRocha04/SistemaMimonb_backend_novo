@@ -1,3 +1,47 @@
+from fastapi import APIRouter, UploadFile, File, HTTPException
+import uuid
+import os
+from minio import Minio
+
+router = APIRouter()
+
+@router.post("/uploads/image")
+async def upload_image(file: UploadFile = File(...)):
+    # Variáveis de ambiente
+    minio_endpoint = os.getenv("MINIO_ENDPOINT")
+    minio_access_key = os.getenv("MINIO_ACCESS_KEY")
+    minio_secret_key = os.getenv("MINIO_SECRET_KEY")
+    minio_bucket = os.getenv("MINIO_BUCKET", "mimonb")
+    minio_public_url = os.getenv("MINIO_PUBLIC_URL")
+
+    # Inicializa o cliente MinIO
+    minio_client = Minio(
+        minio_endpoint,
+        access_key=minio_access_key,
+        secret_key=minio_secret_key,
+        secure=minio_endpoint.startswith("https")
+    )
+
+    # Gera nome único
+    ext = os.path.splitext(file.filename)[1] or ".jpg"
+    filename = f"{uuid.uuid4()}{ext}"
+    key = f"produtos/{filename}"
+
+    # Faz upload
+    try:
+        content = await file.read()
+        minio_client.put_object(
+            minio_bucket,
+            key,
+            data=content,
+            length=len(content),
+            content_type=file.content_type
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao subir imagem: {str(e)}")
+
+    url = f"{minio_public_url}/{minio_bucket}/{key}"
+    return {"key": key, "url": url}
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import os
