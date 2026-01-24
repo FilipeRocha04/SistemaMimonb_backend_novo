@@ -129,7 +129,7 @@ def authenticate_user(db: Session, identifier: str, password: str):
 
 
 # ======================================================
-# DEPENDÊNCIAS DE AUTORIZAÇÃO
+# DEPENDÊNCIAS  AUTORIZAÇÃO
 # ======================================================
 
 def get_current_user(
