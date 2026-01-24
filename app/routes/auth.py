@@ -67,7 +67,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     db.refresh(user)
 
     # Generate verification token and send email
-    from app.utils.email_utils import send_verification_email
+    from app.utils.email import send_verification_email_sync as send_verification_email
     from app.services import auth as auth_service_module
     verification_token = auth_service_module.create_access_token({"sub": user.email, "action": "verify"}, expires_delta=timedelta(hours=24))
     try:
