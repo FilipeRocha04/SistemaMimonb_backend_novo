@@ -12,6 +12,20 @@ from app.models.user import User as UserModel
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+# Endpoint protegido para listar usuários
+@router.get("/users")
+def list_users(db: Session = Depends(get_db), current_user=Depends(auth_service.get_current_user)):
+    # Apenas admin pode ver todos os usuários
+    cur_role = getattr(getattr(current_user, 'papel', None), 'value', getattr(current_user, 'papel', None))
+    if cur_role != 'admin':
+        raise HTTPException(status_code=403, detail="Privilégios insuficientes")
+    try:
+        result = db.execute(text("SELECT email, username, papel FROM users ORDER BY id DESC LIMIT 100"))
+        rows = [dict(r) for r in result.mappings().all()]
+        return {"count": len(rows), "rows": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Endpoint para verificação de e-mail (deve ficar após a definição do router)
 @router.post("/verify", response_model=Token)
 def verify_email(token: str = Body(..., embed=True), db: Session = Depends(get_db)):
