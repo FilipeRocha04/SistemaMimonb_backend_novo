@@ -1,3 +1,4 @@
+from fastapi import Body
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -10,6 +11,36 @@ from app.db.session import get_db
 from app.models.user import User as UserModel
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+# Endpoint para verificação de e-mail (deve ficar após a definição do router)
+@router.post("/verify", response_model=Token)
+def verify_email(token: str = Body(..., embed=True), db: Session = Depends(get_db)):
+    from app.services import auth as auth_service_module
+    from app.models.user import User as UserModel
+    import logging
+    try:
+        data = auth_service_module.decode_token(token)
+        if not data or data.get("action") != "verify":
+            raise HTTPException(status_code=400, detail="Token inválido ou expirado")
+        email = data.get("sub")
+        if not email:
+            raise HTTPException(status_code=400, detail="Token inválido")
+        user = db.query(UserModel).filter(UserModel.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
+        # Marcar como verificado (adapte para seu campo, ex: user.email_verificado = True)
+        if hasattr(user, 'email_verificado'):
+            user.email_verificado = True
+        db.commit()
+        # Gerar token de acesso
+        access_token_expires = timedelta(minutes=auth_service.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = auth_service.create_access_token(
+            data={"sub": user.email}, expires_delta=access_token_expires
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except Exception as e:
+        logging.getLogger('auth').warning(f'Falha ao verificar email: {e}')
+        raise HTTPException(status_code=400, detail="Falha ao verificar email")
 
 class ResetPasswordRequest(BaseModel):
     token: str
