@@ -23,6 +23,4 @@ class User(Base):
     papel = Column(Enum(RoleEnum), nullable=False, server_default=RoleEnum.garcom.value)
     # criado_em timestamp column
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
-    # email_verificado indica se o usuário confirmou o e-mail
-    email_verificado = Column(Boolean, nullable=False, server_default="0")
 
