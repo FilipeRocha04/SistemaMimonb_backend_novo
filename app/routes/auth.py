@@ -20,7 +20,7 @@ def list_users(db: Session = Depends(get_db), current_user=Depends(auth_service.
     if cur_role != 'admin':
         raise HTTPException(status_code=403, detail="Privilégios insuficientes")
     try:
-        result = db.execute(text("SELECT email, username, papel FROM users ORDER BY id DESC LIMIT 100"))
+        result = db.execute(text("SELECT id, email, username, papel FROM users ORDER BY id DESC LIMIT 100"))
         rows = [dict(r) for r in result.mappings().all()]
         return {"count": len(rows), "rows": rows}
     except Exception as e:
