@@ -42,7 +42,9 @@ class Settings:
     # receives a valid URL.
     raw_db = os.getenv(
         "DATABASE_URL",
-        "mysql+pymysql://u235343041_mimonb2:Mimonb%402000@srv1524.hstgr.io:3306/u235343041_mimonb2"
+        # "mysql+pymysql://u235343041_mimonb2:Mimonb%402000@srv1524.hstgr.io:3306/u235343041_mimonb2",
+        # "mysql+pymysql://u235343041_mimonb2_dev:Mimonb%402000@srv1524.hstgr.io:3306/u235343041_mimonb2_dev",
+        "mysql+pymysql://mimonb:Filipe%402004@31.97.31.73:3306/mimonbdevofc",
     )
     if isinstance(raw_db, str) and raw_db.startswith("DATABASE_URL="):
         # remove the first 'DATABASE_URL=' that was accidentally included

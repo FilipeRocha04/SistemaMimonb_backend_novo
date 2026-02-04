@@ -210,6 +210,7 @@ if APP_ENV == "production":
     cors_origins = [
         "https://mimonbforneria.projetosapp.com.br",
         "https://www.mimonbforneria.projetosapp.com.br",
+        "http://localhost:8080",
     ]
 else:
     cors_origins = [
@@ -297,6 +298,8 @@ app.include_router(orders_routes.router)
 app.include_router(pagamentos_routes.router)
 app.include_router(google_oauth.router)
 app.include_router(produtos_precos_quantidade_routes.router)
+from app.routes import pagadores
+app.include_router(pagadores.router)
 # =========================
 @app.on_event("startup")
 def on_startup():

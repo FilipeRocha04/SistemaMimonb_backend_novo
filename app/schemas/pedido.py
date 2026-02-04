@@ -16,12 +16,13 @@ class PedidoItem(BaseModel):
     # categoria/categoria normalizada vinda do backend
     categoria: Optional[str] = None
     category: Optional[str] = None
+    status: Optional[str] = None
 
 
 class PedidoBase(BaseModel):
     # mesa_numero deve ser realmente opcional no payload de criação
     mesa_numero: Optional[str] = None
-    cliente_id: Optional[int]
+    cliente_id: Optional[int] = None
     items: Optional[List[PedidoItem]] = []
     total: float = 0.0
     status: Optional[str] = 'pendente'

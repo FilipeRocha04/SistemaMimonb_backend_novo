@@ -5,6 +5,8 @@ from app.db.session import Base
 
 
 class Pedido(Base):
+    numero_diario = Column(SmallInteger, nullable=True)
+    data_pedido = Column(Date, nullable=True)
     __tablename__ = 'pedidos'
     id = Column(BigInteger, primary_key=True, index=True)
     cliente_id = Column(BigInteger, ForeignKey('clientes.id'), nullable=True)

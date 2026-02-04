@@ -220,8 +220,11 @@ def recompute_order_status_from_items(db: Session, order: PedidoModel) -> str:
             new_status = 'pendente'
         else:
             statuses = [str(getattr(it, 'status', '') or '').lower() for it in items]
-            any_ready = any(('pront' in s) or ('ready' in s) for s in statuses)
-            all_ready = any_ready and all(('pront' in s) or ('ready' in s) for s in statuses)
+            # Treat 'entregue' as a ready/finalized status
+            def is_ready(s):
+                return ('pront' in s) or ('ready' in s) or ('entregue' in s)
+            any_ready = any(is_ready(s) for s in statuses)
+            all_ready = any_ready and all(is_ready(s) for s in statuses)
             if all_ready:
                 new_status = 'pronto'
             elif any_ready:
@@ -314,6 +317,13 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             data_hoje = (datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date())
         except Exception:
             data_hoje = datetime.utcnow().date()
+
+        # Buscar o maior numero_diario do dia
+        max_num = db.query(func.max(PedidoModel.numero_diario)).filter(PedidoModel.data_pedido == data_hoje).scalar()
+        if max_num is None:
+            numero_diario = 1
+        else:
+            numero_diario = max_num + 1
         # Do not store delivery address on the top-level pedido.observacao.
         # Per-remessa address should be stored in pedido_remessas.endereco below.
         observacao = None
@@ -329,6 +339,8 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             valor_total=0.0,
             data=data_hoje,
             observacao=observacao,
+            numero_diario=numero_diario,
+            data_pedido=data_hoje,
         )
 
         # attach items as PedidoItem objects (normalized table)
@@ -497,8 +509,10 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             'adicional_10': int(p.adicional_10 or 0),
             'valor_total': float(p.valor_total or 0),
             'observacao': p.observacao,
-            'criado_em': to_brasilia(p.criado_em),
+            'criado_em': p.criado_em,
             'atualizado_em': getattr(p, 'atualizado_em', None),
+            'numero_diario': p.numero_diario,
+            'data_pedido': str(p.data_pedido) if p.data_pedido else None,
             'items': [
                 {
                     'id': it.id,
@@ -530,6 +544,7 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=tb)
 
 
+@router.get("", response_model=List[PedidoRead])
 @router.get("", response_model=List[PedidoRead])
 @router.get("/", response_model=List[PedidoRead])
 def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: str = None):
@@ -585,6 +600,8 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 'valor_total': float(r.valor_total or 0),
                 'observacao': r.observacao,
                 'paid': (r.id in paid_ids),
+                'numero_diario': getattr(r, 'numero_diario', None),
+                'data_pedido': str(getattr(r, 'data_pedido', None)) if getattr(r, 'data_pedido', None) else None,
                 'items': [
                     {
                         'id': it.id,
@@ -668,6 +685,8 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             'valor_total': float(r.valor_total or 0),
             'observacao': r.observacao,
             'paid': is_paid,
+            'numero_diario': getattr(r, 'numero_diario', None),
+            'data_pedido': str(getattr(r, 'data_pedido', None)) if getattr(r, 'data_pedido', None) else None,
             'items': [
                 {
                     'id': it.id,
@@ -684,7 +703,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
                 for it in (getattr(r, 'items', []) or [])
             ],
                 'criado_em': to_brasilia(r.criado_em),
-            'atualizado_em': getattr(r, 'atualizado_em', None),
+                'atualizado_em': getattr(r, 'atualizado_em', None),
         }
         try:
             rems = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == r.id).order_by(PedidoRemessaModel.id.asc()).all()
@@ -720,7 +739,7 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
         if not order:
             raise HTTPException(status_code=404, detail="Pedido not found")
 
-        # Delete related remessas first (if any), then items, per-categoria statuses, then the order itself.
+        # Delete related remessas first (if any), then items, per-categoria statuses, pagamentos, detalhes_pagamento, then the order itself.
         try:
             db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == order.id).delete()
         except Exception:
@@ -731,9 +750,18 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
         except Exception:
             pass
 
-        # Delete per-categoria status rows to avoid FK constraint errors when deleting the pedido
         try:
             db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == order.id).delete()
+        except Exception:
+            pass
+
+        # Remover pagamentos e detalhes de pagamento vinculados ao pedido
+        try:
+            pagamentos = db.query(PagamentoModel).filter(PagamentoModel.pedido == order.id).all()
+            from app.models.pagador import PagamentoPagadorForma as PagamentoPagadorFormaModel
+            for pagamento in pagamentos:
+                db.query(PagamentoPagadorFormaModel).filter(PagamentoPagadorFormaModel.pagamento_id == pagamento.id).delete()
+            db.query(PagamentoModel).filter(PagamentoModel.pedido == order.id).delete()
         except Exception:
             pass
 
@@ -1468,7 +1496,28 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
                 pass
         if 'status' in payload:
             try:
-                item.status = str(payload['status'])
+                novo_status = str(payload['status'])
+                # Só permite marcar como entregue se já estiver pronto
+                if novo_status == 'entregue' and item.status != 'pronto':
+                    # HTTP 409 = Conflict, para frontend exibir toast customizado
+                    raise HTTPException(status_code=409, detail='ITEM_NOT_READY')
+                item.status = novo_status
+                # Se o novo status for 'entregue', verificar se todos os itens da remessa estão entregues
+                if item.status == 'entregue' and item.remessa_id:
+                    from app.models.pedido_item import PedidoItem as PI
+                    from app.models.pedido_remessa import PedidoRemessa as PR
+                    remessa_id = item.remessa_id
+                    # Busca todos os itens da remessa
+                    itens_remessa = db.query(PI).filter(PI.remessa_id == remessa_id).all()
+                    if itens_remessa and all(it.status == 'entregue' for it in itens_remessa):
+                        remessa = db.query(PR).filter(PR.id == remessa_id).first()
+                        if remessa and remessa.status != 'entregue':
+                            remessa.status = 'entregue'
+                            db.add(remessa)
+                            db.commit()
+                            db.refresh(remessa)
+            except HTTPException:
+                raise
             except Exception:
                 pass
         # support explicit price factor (e.g., meia pizza)
