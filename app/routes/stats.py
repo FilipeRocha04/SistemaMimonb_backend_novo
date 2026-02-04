@@ -18,11 +18,14 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 @router.get("/weekly_revenue")
 def weekly_revenue(db: Session = Depends(get_db)):
     try:
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        # Calcular início e fim da semana atual (segunda a domingo)
+        today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
+        start_of_week = today - timedelta(days=today.weekday())
+        end_of_week = start_of_week + timedelta(days=6)
 
         total = (
             db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(PedidoModel.criado_em >= seven_days_ago)
+            .filter(PedidoModel.data_pedido >= start_of_week, PedidoModel.data_pedido <= end_of_week)
             .scalar()
         )
 
@@ -37,11 +40,17 @@ def weekly_revenue(db: Session = Depends(get_db)):
 @router.get("/monthly_revenue")
 def monthly_revenue(db: Session = Depends(get_db)):
     try:
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        # Calcular início e fim do mês atual
+        today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
+        start_of_month = today.replace(day=1)
+        if today.month == 12:
+            end_of_month = today.replace(year=today.year+1, month=1, day=1) - timedelta(days=1)
+        else:
+            end_of_month = today.replace(month=today.month+1, day=1) - timedelta(days=1)
 
         total = (
             db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(PedidoModel.criado_em >= thirty_days_ago)
+            .filter(PedidoModel.data_pedido >= start_of_month, PedidoModel.data_pedido <= end_of_month)
             .scalar()
         )
 
@@ -78,7 +87,8 @@ def daily_revenue_details(
         sd = ed = today
 
     try:
-        day_key = func.coalesce(PedidoModel.data, func.date(PedidoModel.criado_em))
+        # Usar sempre data_pedido (ou data) para filtro, nunca criado_em
+        day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
 
         filters = []
         if sd and ed:
@@ -275,14 +285,10 @@ def daily_revenue(db: Session = Depends(get_db)):
     try:
         today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
 
+        # Usar apenas data_pedido/data, nunca criado_em
         total = (
             db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(
-                or_(
-                    PedidoModel.data == today,
-                    and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == today),
-                )
-            )
+            .filter(PedidoModel.data_pedido == today)
             .scalar()
         )
 
@@ -303,12 +309,7 @@ def daily_revenue_comparison(db: Session = Depends(get_db)):
         def total_for(day):
             return (
                 db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-                .filter(
-                    or_(
-                        PedidoModel.data == day,
-                        and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == day),
-                    )
-                )
+                .filter(PedidoModel.data_pedido == day)
                 .scalar()
             ) or 0
 
@@ -340,26 +341,21 @@ def average_ticket(
     try:
         q = db.query(PedidoModel)
 
+        # Sempre filtrar por data_pedido
         if startDate or endDate:
             sd = datetime.strptime(startDate, "%Y-%m-%d").date() if startDate else None
             ed = datetime.strptime(endDate, "%Y-%m-%d").date() if endDate else None
 
             if sd and ed:
-                q = q.filter(
-                    or_(
-                        and_(PedidoModel.data >= sd, PedidoModel.data <= ed),
-                        and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) >= sd, func.date(PedidoModel.criado_em) <= ed),
-                    )
-                )
+                q = q.filter(PedidoModel.data_pedido >= sd, PedidoModel.data_pedido <= ed)
+            elif sd:
+                q = q.filter(PedidoModel.data_pedido >= sd)
+            elif ed:
+                q = q.filter(PedidoModel.data_pedido <= ed)
 
         if not startDate and not endDate and not allDates:
             today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
-            q = q.filter(
-                or_(
-                    PedidoModel.data == today,
-                    and_(PedidoModel.data == None, func.date(PedidoModel.criado_em) == today),
-                )
-            )
+            q = q.filter(PedidoModel.data_pedido == today)
 
         rows = q.all()
         total = sum(float(r.valor_total or 0) for r in rows)
@@ -387,7 +383,7 @@ def average_ticket_per_day(
         sd = datetime.strptime(startDate, "%Y-%m-%d").date() if startDate else None
         ed = datetime.strptime(endDate, "%Y-%m-%d").date() if endDate else None
 
-        day_key = func.coalesce(PedidoModel.data, func.date(PedidoModel.criado_em))
+        day_key = PedidoModel.data_pedido
 
         q = db.query(
             day_key.label("dia"),
@@ -397,6 +393,10 @@ def average_ticket_per_day(
 
         if sd and ed:
             q = q.filter(day_key >= sd, day_key <= ed)
+        elif sd:
+            q = q.filter(day_key >= sd)
+        elif ed:
+            q = q.filter(day_key <= ed)
 
         q = q.group_by(day_key).order_by(day_key.asc())
 
@@ -409,7 +409,7 @@ def average_ticket_per_day(
                     "averageTicket": float(avg or 0),
                     "count": int(count or 0),
                 }
-                for dia, avg, count in rows
+                for dia, avg, count in rows if dia is not None
             ]
         }
 

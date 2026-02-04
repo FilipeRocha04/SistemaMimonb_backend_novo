@@ -313,34 +313,34 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         adicional_10 = 0
         valor_total = 0.0
         # Definir a data (dia) do pedido independentemente de estar pago.
-        try:
-            data_hoje = (datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date())
-        except Exception:
-            data_hoje = datetime.utcnow().date()
+        # Permitir data_pedido retroativa/futura se enviada no payload
+        data_pedido = getattr(payload, 'data_pedido', None)
+        if not data_pedido:
+            try:
+                data_pedido = (datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date())
+            except Exception:
+                data_pedido = datetime.utcnow().date()
 
-        # Buscar o maior numero_diario do dia
-        max_num = db.query(func.max(PedidoModel.numero_diario)).filter(PedidoModel.data_pedido == data_hoje).scalar()
+        # Buscar o maior numero_diario do dia informado
+        max_num = db.query(func.max(PedidoModel.numero_diario)).filter(PedidoModel.data_pedido == data_pedido).scalar()
         if max_num is None:
             numero_diario = 1
         else:
             numero_diario = max_num + 1
-        # Do not store delivery address on the top-level pedido.observacao.
-        # Per-remessa address should be stored in pedido_remessas.endereco below.
         observacao = None
 
         p = PedidoModel(
             cliente_id=payload.cliente_id,
             usuario_id=None,
             mesa=getattr(payload, 'mesa_numero', None),
-            # Stop using pedidos.tipo; keep DB default and use remessa.tipo instead
             status=map_incoming_status(getattr(payload, 'status', None)),
             subtotal=0.0,
             adicional_10=adicional_10,
             valor_total=0.0,
-            data=data_hoje,
+            data=data_pedido,
             observacao=observacao,
             numero_diario=numero_diario,
-            data_pedido=data_hoje,
+            data_pedido=data_pedido,
         )
 
         # attach items as PedidoItem objects (normalized table)

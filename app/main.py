@@ -187,6 +187,7 @@ from app.routes import google_oauth
 from app.routes import produtos_precos_quantidade as produtos_precos_quantidade_routes
 from app.db import session as db_session
 from app.core.config import settings
+from app.routes.orders_last_updated import router as orders_last_updated_router
 
 # Logger
 _req_logger = logging.getLogger("request_logger")
@@ -300,6 +301,7 @@ app.include_router(google_oauth.router)
 app.include_router(produtos_precos_quantidade_routes.router)
 from app.routes import pagadores
 app.include_router(pagadores.router)
+app.include_router(orders_last_updated_router)
 # =========================
 @app.on_event("startup")
 def on_startup():
