@@ -192,18 +192,22 @@ def daily_revenue_details(
             print(f"🔍 DEBUG - Pedido 524 data: {pedido_existe.data}")
             print(f"🔍 DEBUG - Pedido 524 criado_em: {pedido_existe.criado_em}")
 
+
         # -------------------------
-        # Payment breakdown
+        # Payment breakdown (usando pagamento_pagador_forma)
         # -------------------------
-        pays = (
+        from app.models.pagador import PagamentoPagadorForma
+        # Seleciona todos os pagamentos dos pedidos filtrados
+        pedidos_ids = db.query(PedidoModel.id).filter(*filters).subquery()
+        pagamentos_ids = db.query(PagamentoModel.id).filter(PagamentoModel.pedido.in_(pedidos_ids)).subquery()
+        pf_rows = (
             db.query(
-                PagamentoModel.forma_pagamento.label("method"),
-                func.count(PagamentoModel.id).label("count"),
-                func.coalesce(func.sum(PagamentoModel.valor), 0).label("total"),
+                PagamentoPagadorForma.forma_pagamento.label("method"),
+                func.count(PagamentoPagadorForma.id).label("count"),
+                func.coalesce(func.sum(PagamentoPagadorForma.valor), 0).label("total"),
             )
-            .join(PedidoModel, PagamentoModel.pedido == PedidoModel.id)
-            .filter(*filters)
-            .group_by(PagamentoModel.forma_pagamento)
+            .filter(PagamentoPagadorForma.pagamento_id.in_(pagamentos_ids))
+            .group_by(PagamentoPagadorForma.forma_pagamento)
             .all()
         )
 
@@ -213,7 +217,7 @@ def daily_revenue_details(
                 "count": int(count or 0),
                 "total": float(total or 0),
             }
-            for method, count, total in pays
+            for method, count, total in pf_rows
         ]
 
         resp_date = sd.isoformat() if sd == ed else None
