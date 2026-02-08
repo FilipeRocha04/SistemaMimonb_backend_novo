@@ -18,17 +18,23 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 @router.get("/weekly_revenue")
 def weekly_revenue(db: Session = Depends(get_db)):
     try:
-        # Calcular início e fim da semana atual (segunda a domingo)
         today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
-        start_of_week = today - timedelta(days=today.weekday())
-        end_of_week = start_of_week + timedelta(days=6)
+        # Domingo = 6, Segunda = 0 ...
+        weekday = today.weekday()
+        # Se hoje é domingo (6), começa nova semana
+        if weekday == 6:
+            start_of_week = today
+            end_of_week = today + timedelta(days=6)
+        else:
+            # Semana começa no domingo anterior
+            start_of_week = today - timedelta(days=weekday+1)
+            end_of_week = start_of_week + timedelta(days=6)
 
-        total = (
-            db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(PedidoModel.data_pedido >= start_of_week, PedidoModel.data_pedido <= end_of_week)
-            .scalar()
-        )
-
+        print(f"[DEBUG] Período semanal: {start_of_week} a {end_of_week}")
+        pedidos = db.query(PedidoModel).filter(PedidoModel.data_pedido >= start_of_week, PedidoModel.data_pedido <= end_of_week).all()
+        print(f"[DEBUG] Pedidos encontrados: {[p.id for p in pedidos]}")
+        total = sum([float(p.valor_total or 0) for p in pedidos])
+        print(f"[DEBUG] Total calculado: {total}")
         return {"weeklyRevenue": float(total or 0)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
