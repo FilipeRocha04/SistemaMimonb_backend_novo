@@ -19,7 +19,7 @@ router = APIRouter(prefix="/reservas", tags=["Reservas"])
 def create_reserva(payload: ReservaCreate, db: Session = Depends(get_db)):
     try:
         r = ReservaModel(
-            mesa_id=payload.mesa_id,
+            mesa=payload.mesa,
             cliente_id=payload.cliente_id,
             data_reserva=payload.data_reserva,
             hora_reserva=payload.hora_reserva,

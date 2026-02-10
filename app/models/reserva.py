@@ -14,7 +14,7 @@ class Reserva(Base):
     __tablename__ = 'reservas'
 
     id = Column(BigInteger, primary_key=True, index=True)
-    mesa_id = Column(BigInteger, nullable=True)
+    mesa = Column(String, nullable=True)
     cliente_id = Column(BigInteger, nullable=True)
     cliente_id = Column(BigInteger, ForeignKey("clientes.id"), nullable=True)
     data_reserva = Column(Date, nullable=False)

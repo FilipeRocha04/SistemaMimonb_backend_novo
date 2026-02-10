@@ -11,7 +11,7 @@ class ReservaStatus(str, Enum):
 
 
 class ReservaBase(BaseModel):
-    mesa_id: Optional[int]
+    mesa: Optional[str] = None
     cliente_id: Optional[int]
     data_reserva: date
     hora_reserva: time
