@@ -73,7 +73,7 @@ def list_reservas(
         for r in rows:
             item = {
                 'id': r.id,
-                'mesa_id': r.mesa_id,
+                'mesa': r.mesa,
                 'cliente_id': r.cliente_id,
                 'data_reserva': r.data_reserva,
                 'hora_reserva': r.hora_reserva,
@@ -120,7 +120,7 @@ def update_reserva(reserva_id: int, payload: ReservaCreate, db: Session = Depend
     if not r:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
     try:
-        r.mesa_id = payload.mesa_id
+        r.mesa = payload.mesa
         r.cliente_id = payload.cliente_id
         r.data_reserva = payload.data_reserva
         r.hora_reserva = payload.hora_reserva
