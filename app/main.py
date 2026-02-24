@@ -164,6 +164,7 @@ import logging
 from fastapi import FastAPI, Request
 from starlette.middleware.sessions import SessionMiddleware
 
+
 # Load .env automatically
 try:
     from dotenv import load_dotenv
@@ -186,6 +187,7 @@ from app.routes import users as users_routes
 from app.routes import stats as stats_routes
 from app.routes import google_oauth
 from app.routes import produtos_precos_quantidade as produtos_precos_quantidade_routes
+from app.routes import orders_ws
 from app.db import session as db_session
 from app.core.config import settings
 from app.routes.orders_last_updated import router as orders_last_updated_router
