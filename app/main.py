@@ -21,6 +21,7 @@
 # from app.routes import orders as orders_routes
 # from app.routes import kitchen as kitchen_routes
 # from app.routes import pagamentos as pagamentos_routes
+from app.routes import orders_ws
 # from app.routes import users as users_routes
 from app.routes import stats as stats_routes
 # from app.routes import google_oauth
@@ -188,6 +189,9 @@ from app.routes import produtos_precos_quantidade as produtos_precos_quantidade_
 from app.db import session as db_session
 from app.core.config import settings
 from app.routes.orders_last_updated import router as orders_last_updated_router
+from fastapi import FastAPI, Request
+import time
+
 
 # Logger
 _req_logger = logging.getLogger("request_logger")
@@ -201,6 +205,17 @@ app = FastAPI(
     description="Backend profissional com FastAPI",
     redirect_slashes=False,
 )
+
+@app.middleware("http")
+async def log_request_time(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    duration = time.time() - start_time
+    print(f"{request.url.path} demorou {duration:.4f}s")
+    return response
+
+app.include_router(orders_routes.router)
+app.include_router(products_routes.router)
 
 # =========================
 # ENV + CORS
@@ -299,9 +314,12 @@ app.include_router(orders_routes.router)
 app.include_router(pagamentos_routes.router)
 app.include_router(google_oauth.router)
 app.include_router(produtos_precos_quantidade_routes.router)
+app.include_router(orders_ws.router)
 from app.routes import pagadores
 app.include_router(pagadores.router)
 app.include_router(orders_last_updated_router)
+from app.routes import pagamentos_detalhe
+app.include_router(pagamentos_detalhe.router)
 # =========================
 @app.on_event("startup")
 def on_startup():

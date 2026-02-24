@@ -8,6 +8,7 @@ import logging
 
 from app.db.session import get_db
 from app.utils.pubsub import publish
+from app.routes.orders_ws import notify_orders_update
 from app.models.product import Produto as ProdutoModel
 from app.models.client import Cliente as ClienteModel
 import asyncio
@@ -535,6 +536,12 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                 'bebida': db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == p.id, PedidoCategoriaStatusModel.categoria == 'bebida').first().status if db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == p.id, PedidoCategoriaStatusModel.categoria == 'bebida').first() else None,
             },
         }
+        # Notifica clientes WebSocket sobre novo pedido
+        try:
+            import asyncio
+            asyncio.create_task(notify_orders_update())
+        except Exception:
+            pass
         return data
     except Exception as e:
         db.rollback()
@@ -767,6 +774,12 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
 
         db.delete(order)
         db.commit()
+        # Notifica clientes WebSocket sobre remoção de pedido
+        try:
+            import asyncio
+            asyncio.create_task(notify_orders_update())
+        except Exception:
+            pass
         return
     except HTTPException:
         raise
@@ -1776,6 +1789,12 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
         except Exception:
             rems = []
 
+        # Notifica clientes WebSocket sobre atualização de pedido
+        try:
+            import asyncio
+            asyncio.create_task(notify_orders_update())
+        except Exception:
+            pass
         return {
             'id': order.id,
             'cliente_id': order.cliente_id,

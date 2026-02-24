@@ -50,3 +50,13 @@ class PagamentoUpdate(BaseModel):
     # Adicione outros campos se necessário
 
     model_config = dict(from_attributes=True)
+
+
+class PagamentoPagadorFormaUpdate(BaseModel):
+    pagamento_id: Optional[int] = None
+    pagador_id: Optional[int] = None
+    forma_pagamento: Optional[str] = None
+    valor: Optional[float] = None
+
+    class Config:
+        orm_mode = True
