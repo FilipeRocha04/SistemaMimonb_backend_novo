@@ -1034,6 +1034,14 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
                     'endereco': getattr(remessa, 'endereco', None),
                 }
             }
+            # PATCH: notifica via WebSocket orders_ws
+            try:
+                from app.routes.orders_ws import notify_orders_update
+                import asyncio
+                asyncio.create_task(notify_orders_update())
+            except Exception:
+                pass
+            # Mantém publish para outros listeners
             try:
                 asyncio.create_task(publish(event))
             except RuntimeError:
@@ -1078,6 +1086,7 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
             'atualizado_em': getattr(order, 'atualizado_em', None),
         }
         try:
+            rems = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == order.id).order_by(PedidoRemessaModel.id.asc()).all()
             d['remessas'] = [
                 {
                     'id': rr.id,
@@ -1092,8 +1101,13 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
             ]
         except Exception:
             d['remessas'] = []
+        # include per-categoria statuses (optional)
+        try:
+            cat_rows = db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == order.id).all()
+            d['category_status'] = {cr.categoria: cr.status for cr in cat_rows}
+        except Exception:
+            d['category_status'] = {}
 
-        # Return updated order state
         return d
     except HTTPException:
         raise
@@ -1236,12 +1250,6 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             rems = []
 
         # include remessa status map for items in this response
-        try:
-            rems = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == order.id).order_by(PedidoRemessaModel.id.asc()).all()
-        except Exception:
-            rems = []
-
-        # include remessa status per item in response
         try:
             rems = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == order.id).order_by(PedidoRemessaModel.id.asc()).all()
             remessa_status_map = {rr.id: getattr(rr, 'status', 'pendente') for rr in rems}
