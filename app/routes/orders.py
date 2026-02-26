@@ -948,6 +948,13 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
         except Exception:
             d['category_status'] = {}
 
+        # Notifica clientes WebSocket sobre nova remessa
+        try:
+            import asyncio
+            from app.routes.orders_ws import notify_orders_update
+            asyncio.create_task(notify_orders_update())
+        except Exception:
+            pass
         return d
     except HTTPException:
         raise
