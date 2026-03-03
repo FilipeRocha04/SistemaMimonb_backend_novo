@@ -1144,13 +1144,12 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
         for it in items_payload:
             name = it.get('name') or it.get('nome') or ''
             qty = int(it.get('quantity') or it.get('qty') or 1)
-            # Snapshot price at the moment of addition
-            base_price = resolve_current_price_for_item(it, db)
-            price = base_price
-            obs = it.get('observation') or it.get('observacao')
+            # Sempre salva o preço atual do produto no item
             prod_id = it.get('id')
             remessa_id = it.get('remessa_id')
+            obs = it.get('observation') or it.get('observacao')
             from app.models.pedido_item import PedidoItem as PI
+            price = resolve_current_price_for_item({'id': prod_id}, db)
             item_model = PI(produto_id=prod_id, nome=name, quantidade=qty, preco=price, observacao=obs, status='pendente', remessa_id=remessa_id)
             order.items.append(item_model)
             added.append(item_model)
