@@ -222,24 +222,18 @@ app.include_router(products_routes.router)
 # =========================
 # ENV + CORS
 # =========================
-APP_ENV = os.getenv("APP_ENV", "development")
 
-if APP_ENV == "production":
-    cors_origins = [
-        "https://mimonbforneria.projetosapp.com.br",
-        "https://www.mimonbforneria.projetosapp.com.br",
-        "http://localhost:8080",
-    ]
-else:
-    cors_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
-
-# ✅ CORS (UMA ÚNICA VEZ)
+# CORS para desenvolvimento e produção
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=[
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://mimonbforneria.projetosapp.com.br",
+        "https://www.mimonbforneria.projetosapp.com.br"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
