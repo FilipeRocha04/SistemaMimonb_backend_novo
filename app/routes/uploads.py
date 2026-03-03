@@ -56,12 +56,17 @@ async def upload_image(file: UploadFile = File(...)):
     filename = f"{uuid.uuid4().hex}{ext}"
     key = f"produtos/{filename}"
 
+
     try:
+        # Calcula o tamanho real do arquivo
+        file.file.seek(0, os.SEEK_END)
+        file_size = file.file.tell()
+        file.file.seek(0)
         client.put_object(
             minio_bucket,
             key,
             file.file,
-            length=-1,
+            length=file_size,
             part_size=10 * 1024 * 1024,
             content_type=file.content_type
         )
