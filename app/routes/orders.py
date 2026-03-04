@@ -1513,7 +1513,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
         # apply updates
         if 'quantity' in payload:
             try:
-                item.quantidade = int(payload['quantity'])
+                item.quantidade = float(payload['quantity'])
             except Exception:
                 pass
         if 'price' in payload:
