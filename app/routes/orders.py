@@ -1143,7 +1143,7 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
         added = []
         for it in items_payload:
             name = it.get('name') or it.get('nome') or ''
-            qty = int(it.get('quantity') or it.get('qty') or 1)
+            qty = float(it.get('quantity') or it.get('qty') or 1)
             # Sempre salva o preço atual do produto no item
             prod_id = it.get('id')
             remessa_id = it.get('remessa_id')
@@ -1154,10 +1154,8 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             order.items.append(item_model)
             added.append(item_model)
 
-        # recompute subtotal/valor_total
-        subtotal = float(order.subtotal or 0)
-        for a in added:
-            subtotal += float(a.preco) * int(a.quantidade)
+        # recompute subtotal/valor_total considerando todos os itens do pedido
+        subtotal = sum(float(item.preco) * float(item.quantidade) for item in order.items)
         order.subtotal = subtotal
         # respect adicional_10 flag when computing valor_total
         try:
@@ -1549,11 +1547,15 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
                 pass
         # support explicit price factor (e.g., meia pizza)
 
-        # recompute subtotal and valor_total from remaining items (still mutable)
+        # commit e refresh para garantir que order.items está atualizado
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+        # recompute subtotal and valor_total from all items (still mutable)
         subtotal = 0.0
         for it in (getattr(order, 'items', []) or []):
             try:
-                subtotal += float(it.preco or 0) * int(it.quantidade or 1)
+                subtotal += float(it.preco or 0) * float(it.quantidade or 1)
             except Exception:
                 pass
         order.subtotal = subtotal
