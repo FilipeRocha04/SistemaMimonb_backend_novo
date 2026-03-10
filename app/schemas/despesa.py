@@ -21,8 +21,7 @@ class DespesaCreate(DespesaBase):
 class DespesaRead(DespesaBase):
     id: int
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class DespesaUpdate(BaseModel):

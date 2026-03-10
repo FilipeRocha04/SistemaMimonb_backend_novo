@@ -26,5 +26,4 @@ class ProdutoRead(BaseModel):
     imagem: Optional[str] = None
     criado_em: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

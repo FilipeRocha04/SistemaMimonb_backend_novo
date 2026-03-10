@@ -21,5 +21,4 @@ class PedidoRemessaRead(BaseModel):
     status: str
     criado_em: Optional[datetime]
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

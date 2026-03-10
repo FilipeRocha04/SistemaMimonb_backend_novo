@@ -7,8 +7,7 @@ class ProdutoPrecoQuantidadeRead(BaseModel):
     quantidade: int
     preco: float
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 class ProdutoPrecoQuantidadeCreate(BaseModel):
     quantidade: int

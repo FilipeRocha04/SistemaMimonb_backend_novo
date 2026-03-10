@@ -11,7 +11,6 @@ class PagadorCreate(PagadorBase):
 class PagadorRead(PagadorBase):
     id: int
     criado_em: Optional[datetime] = None
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 # ...existing code...

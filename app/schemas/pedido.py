@@ -58,7 +58,4 @@ class PedidoRead(BaseModel):
     criado_em: Optional[datetime] = None
     atualizado_em: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
-        # allow extra fields coming from manual dict responses (e.g., categoria)
-        extra = "allow"
+    model_config = {"from_attributes": True, "extra": "allow"}

@@ -316,6 +316,8 @@ app.include_router(pagadores.router)
 app.include_router(orders_last_updated_router)
 from app.routes import pagamentos_detalhe
 app.include_router(pagamentos_detalhe.router)
+from app.routes import pagamentos_itens
+app.include_router(pagamentos_itens.router)
 # =========================
 @app.on_event("startup")
 def on_startup():

@@ -23,8 +23,7 @@ class PagamentoPagadorFormaRead(PagamentoPagadorFormaBase):
     id: int
     criado_em: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 
@@ -39,8 +38,7 @@ class PagamentoRead(PagamentoBase):
     atualizado_em: Optional[datetime] = None
     detalhes_pagamento: Optional[List[PagamentoPagadorFormaRead]] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class PagamentoUpdate(BaseModel):
@@ -58,5 +56,4 @@ class PagamentoPagadorFormaUpdate(BaseModel):
     forma_pagamento: Optional[str] = None
     valor: Optional[float] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

@@ -31,5 +31,4 @@ class ReservaRead(ReservaBase):
     atualizado_em: Optional[datetime] = None
     cliente_name: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

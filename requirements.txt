@@ -21,3 +21,5 @@ greenlet==3.3.0
 watchfiles==1.1.1
 websockets==16.0
 pyyaml==6.0.3
+minio
+python-multipart

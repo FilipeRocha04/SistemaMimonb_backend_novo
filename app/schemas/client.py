@@ -20,5 +20,4 @@ class ClienteRead(BaseModel):
     ativo: Optional[bool] = True
     criado_em: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

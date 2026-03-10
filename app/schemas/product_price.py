@@ -9,5 +9,4 @@ class ProdutoPrecoRead(BaseModel):
     preco: float
     criado_em: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
