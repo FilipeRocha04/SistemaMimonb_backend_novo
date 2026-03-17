@@ -764,6 +764,33 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
 
         # Remover pagamentos e detalhes de pagamento vinculados ao pedido
         try:
+            # Primeiro remover formas de pagamento da divisão por itens
+            from sqlalchemy import text
+            db.execute(text("""
+                DELETE FROM pagadores_itens_forma_pagamento 
+                WHERE pagamento_itens_pagador_id IN (
+                    SELECT id FROM pagamentos_itens_pagador 
+                    WHERE pedido_id = :pedido_id
+                )
+            """), {"pedido_id": order.id})
+        except Exception:
+            pass
+        
+        try:
+            # Depois remover pagamentos_itens_pagador
+            from sqlalchemy import text
+            db.execute(text("DELETE FROM pagamentos_itens_pagador WHERE pedido_id = :pedido_id"), {"pedido_id": order.id})
+        except Exception:
+            pass
+        
+        try:
+            # Depois remover pagadores_formas_pagamento
+            from sqlalchemy import text
+            db.execute(text("DELETE FROM pagadores_formas_pagamento WHERE pedido_id = :pedido_id"), {"pedido_id": order.id})
+        except Exception:
+            pass
+        
+        try:
             pagamentos = db.query(PagamentoModel).filter(PagamentoModel.pedido == order.id).all()
             from app.models.pagador import PagamentoPagadorForma as PagamentoPagadorFormaModel
             for pagamento in pagamentos:
