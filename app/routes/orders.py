@@ -509,6 +509,7 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             'subtotal': float(p.subtotal or 0),
             'adicional_10': int(p.adicional_10 or 0),
             'valor_total': float(p.valor_total or 0),
+            'pagar_depois': int(p.pagar_depois or 0),
             'observacao': p.observacao,
             'criado_em': p.criado_em,
             'atualizado_em': getattr(p, 'atualizado_em', None),
@@ -605,6 +606,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 'subtotal': float(r.subtotal or 0),
                 'adicional_10': int(r.adicional_10 or 0),
                 'valor_total': float(r.valor_total or 0),
+                'pagar_depois': int(r.pagar_depois or 0),
                 'observacao': r.observacao,
                 'paid': (r.id in paid_ids),
                 'numero_diario': getattr(r, 'numero_diario', None),
@@ -660,6 +662,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
         r = db.query(PedidoModel).options(joinedload(PedidoModel.items), joinedload(PedidoModel.cliente)).filter(PedidoModel.id == order_id).first()
         if not r:
             raise HTTPException(status_code=404, detail='Pedido not found')
+        print(f"[DEBUG BACKEND] GET /orders/{order_id} - Carregado do DB: pagar_depois={r.pagar_depois}")
         # fetch remessas early so items can include remessa_status
         try:
             rems = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == r.id).order_by(PedidoRemessaModel.id.asc()).all()
@@ -690,6 +693,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             'subtotal': float(r.subtotal or 0),
             'adicional_10': int(r.adicional_10 or 0),
             'valor_total': float(r.valor_total or 0),
+            'pagar_depois': int(r.pagar_depois or 0),
             'observacao': r.observacao,
             'paid': is_paid,
             'numero_diario': getattr(r, 'numero_diario', None),
@@ -728,6 +732,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             ]
         except Exception:
             d['remessas'] = []
+        print(f"[DEBUG BACKEND] GET /orders/{order_id} - Retornando resposta: pagar_depois={d.get('pagar_depois')}")
         return d
     except HTTPException:
         raise
@@ -933,6 +938,7 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
             'valor_total': float(order.valor_total or 0),
+            'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
                 {
@@ -1100,6 +1106,7 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
             'valor_total': float(order.valor_total or 0),
+            'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
                 {
@@ -1317,6 +1324,7 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
             'valor_total': float(order.valor_total or 0),
+            'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
                 {
@@ -1483,6 +1491,7 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
             'valor_total': float(order.valor_total or 0),
+            'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
                 {
@@ -1642,6 +1651,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
             'valor_total': float(order.valor_total or 0),
+            'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
                 {
@@ -1677,9 +1687,12 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
     Expected payload example: { "status": "preparando" }
     """
     try:
+        print(f"[DEBUG BACKEND] PATCH /orders/{order_id} recebido com payload: {payload}")
         order = db.query(PedidoModel).options(joinedload(PedidoModel.items)).filter(PedidoModel.id == order_id).first()
         if not order:
             raise HTTPException(status_code=404, detail='Pedido not found')
+        
+        print(f"[DEBUG BACKEND] Order carregado do DB: pagar_depois={order.pagar_depois}")
 
         updated = False
         # allow updating status
@@ -1745,6 +1758,23 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
             except Exception:
                 pass
 
+        # Allow toggling the pagar_depois flag
+        print(f"[DEBUG BACKEND] Verificando se 'pagar_depois' está no payload...")
+        print(f"[DEBUG BACKEND] Payload recebido: {payload}")
+        print(f"[DEBUG BACKEND] 'pagar_depois' in payload: {'pagar_depois' in payload}")
+        if 'pagar_depois' in payload:
+            print(f"[DEBUG BACKEND] payload['pagar_depois'] = {payload['pagar_depois']}")
+        
+        if 'pagar_depois' in payload and payload['pagar_depois'] is not None:
+            try:
+                val = int(bool(payload['pagar_depois']))
+                print(f"[DEBUG BACKEND] Atualizando pagar_depois para {val} para order {order.id}")
+                order.pagar_depois = val
+                updated = True
+            except Exception as e:
+                print(f"[DEBUG BACKEND] Erro ao atualizar pagar_depois: {e}")
+                pass
+
         # If the incoming status transitions the order to a finalized state, compute and freeze totals now.
         try:
             incoming_status = payload.get('status')
@@ -1774,6 +1804,16 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
 
         db.add(order)
         db.commit()
+        print(f"[DEBUG BACKEND] Após commit: order.pagar_depois = {order.pagar_depois}")
+        
+        # Verificar direto no banco se foi salvo
+        try:
+            from sqlalchemy import text
+            result = db.execute(text("SELECT pagar_depois FROM pedidos WHERE id = :id"), {"id": order.id}).fetchone()
+            print(f"[DEBUG BACKEND] SELECT direto do DB após commit: pagar_depois = {result[0] if result else 'NOT FOUND'}")
+        except Exception as e:
+            print(f"[DEBUG BACKEND] Erro ao fazer SELECT: {e}")
+        
         # log status after commit to verify persistence
         try:
             import logging as _logging
@@ -1781,6 +1821,7 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
         except Exception:
             pass
         db.refresh(order)
+        print(f"[DEBUG BACKEND] Após refresh: order.pagar_depois = {order.pagar_depois}")
         try:
             import logging as _logging
             _logging.debug(f"[orders.update] after refresh status={getattr(order, 'status', None)!r}")
@@ -1849,6 +1890,7 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
             'valor_total': float(order.valor_total or 0),
+            'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
                 {

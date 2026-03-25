@@ -52,6 +52,7 @@ class PedidoRead(BaseModel):
     subtotal: float
     adicional_10: int
     valor_total: float
+    pagar_depois: int = 0
     observacao: Optional[str]
     items: Optional[List[PedidoItem]] = []
     remessas: Optional[List[PedidoRemessaRead]] = []

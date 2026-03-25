@@ -7,7 +7,7 @@ class Cliente(Base):
     __tablename__ = "clientes"
 
     id = Column(Integer, primary_key=True, index=True)
-    nome = Column(String(255), nullable=False)
+    nome = Column(String(255), nullable=False, unique=True, index=True)
     telefone = Column(String(50), nullable=True)
     endereco = Column(String(500), nullable=True)
     observacoes = Column(Text, nullable=True)
