@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
 import json
@@ -1681,7 +1681,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
 
 
 @router.patch("/{order_id}", response_model=PedidoRead)
-async def update_order(order_id: int, payload: dict, db: Session = Depends(get_db)):
+async def update_order(order_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
     """Update top-level order fields such as status.
 
     Expected payload example: { "status": "preparando" }
@@ -1767,7 +1767,13 @@ async def update_order(order_id: int, payload: dict, db: Session = Depends(get_d
         
         if 'pagar_depois' in payload and payload['pagar_depois'] is not None:
             try:
-                val = int(bool(payload['pagar_depois']))
+                # Converte para inteiro: 0 ou 1
+                incoming_val = payload['pagar_depois']
+                # Se for string, converte
+                if isinstance(incoming_val, str):
+                    val = int(incoming_val)
+                else:
+                    val = int(bool(incoming_val))
                 print(f"[DEBUG BACKEND] Atualizando pagar_depois para {val} para order {order.id}")
                 order.pagar_depois = val
                 updated = True
