@@ -9,6 +9,7 @@ class PagamentoBase(BaseModel):
     status: Optional[str] = 'pendente'
     valor: float = 0.0
     forma_pagamento: str = 'dinheiro'
+    divisao_forma: Optional[str] = None  # 'igualitaria' ou 'itens'
 
 class PagamentoPagadorFormaBase(BaseModel):
     pagamento_id: int

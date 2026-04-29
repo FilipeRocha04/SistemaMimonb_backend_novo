@@ -16,6 +16,8 @@ class Pagamento(Base):
     status = Column(String(50), nullable=True)
     valor = Column(Numeric(10, 2), nullable=False, default=0)
     forma_pagamento = Column(String(50), nullable=False, default='dinheiro')
+    # Coluna existente para armazenar o tipo de divisão: 'igualitaria' ou 'itens'
+    divisao_forma = Column(String(20), nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), onupdate=func.now())
 

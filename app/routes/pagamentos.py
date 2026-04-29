@@ -21,11 +21,13 @@ def create_pagamento(payload: PagamentoCreate, db: Session = Depends(get_db)):
         forma = payload.forma_pagamento
         if forma == 'card':
             forma = 'cartao'
+        divisao = payload.divisao_forma or None
         p = PagamentoModel(
             pedido=payload.pedido,
             status=payload.status,
             valor=payload.valor,
             forma_pagamento=forma,
+            divisao_forma=divisao,
         )
         db.add(p)
         db.commit()

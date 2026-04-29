@@ -36,7 +36,7 @@ def create_client(payload: ClienteCreate, db: Session = Depends(get_db)):
 @router.get("/", response_model=List[ClienteRead])
 def list_clients(db: Session = Depends(get_db)):
     try:
-        rows = db.query(ClienteModel).order_by(ClienteModel.id.desc()).limit(200).all()
+        rows = db.query(ClienteModel).order_by(ClienteModel.id.desc()).all()
         return rows
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
