@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models.pagamento import Pagamento as PagamentoModel
 from app.models.pedido import Pedido as PedidoModel
 from app.models.pedido_item import PedidoItem as PedidoItemModel
+from app.models.product import Produto as ProdutoModel
 from app.core.timezone_utils import BRAZIL_TZ
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
@@ -201,22 +202,25 @@ def daily_revenue_details(
                 PedidoItemModel.nome.label("nome"),
                 func.coalesce(func.sum(PedidoItemModel.quantidade), 0).label("qty"),
                 func.coalesce(func.sum(PedidoItemModel.quantidade * PedidoItemModel.preco), 0).label("revenue"),
+                func.max(ProdutoModel.categoria).label("categoria"),
             )
             .join(PedidoModel, PedidoItemModel.pedido_id == PedidoModel.id)
+            .outerjoin(ProdutoModel, PedidoItemModel.produto_id == ProdutoModel.id)
             .filter(*filters)
             .group_by(PedidoItemModel.nome)
             .order_by(func.coalesce(func.sum(PedidoItemModel.quantidade), 0).desc())
         )
 
-        top_rows = items_q.limit(10).all()
+        top_rows = items_q.all()
 
         top_products = [
             {
                 "name": nome or "Produto",
                 "quantity": float(qty or 0),
                 "revenue": float(rev or 0),
+                "category": str(categoria or '').lower().strip(),
             }
-            for nome, qty, rev in top_rows
+            for nome, qty, rev, categoria in top_rows
         ]
 
         print(f"🔍 DEBUG - top_products count: {len(top_products)}")
