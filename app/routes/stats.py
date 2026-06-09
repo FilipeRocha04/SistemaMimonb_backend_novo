@@ -72,8 +72,15 @@ def weekly_revenue(db: Session = Depends(get_db)):
 
         week_filters = [day_key >= start_of_week, day_key <= end_of_week]
         effective = compute_effective_total(db, week_filters)
-        print(f"[DEBUG weekly_revenue] week {start_of_week}..{end_of_week} effective={effective}")
-        return {"weeklyRevenue": effective}
+
+        from app.models.pagador import PagamentoPagadorForma
+        pedidos_ids_week = db.query(PedidoModel.id).filter(*week_filters).subquery()
+        pagamentos_ids_week = db.query(PagamentoModel.id).filter(PagamentoModel.pedido.in_(pedidos_ids_week)).subquery()
+        payment_total = float(db.query(func.coalesce(func.sum(PagamentoPagadorForma.valor), 0)).filter(PagamentoPagadorForma.pagamento_id.in_(pagamentos_ids_week)).scalar() or 0)
+
+        revenue = payment_total if payment_total > 0 else effective
+        print(f"[DEBUG weekly_revenue] week {start_of_week}..{end_of_week} effective={effective} payment_total={payment_total} revenue={revenue}")
+        return {"weeklyRevenue": revenue}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -97,8 +104,15 @@ def monthly_revenue(db: Session = Depends(get_db)):
 
         month_filters = [day_key >= start_of_month, day_key <= end_of_month]
         effective = compute_effective_total(db, month_filters)
-        print(f"[DEBUG monthly_revenue] month {start_of_month}..{end_of_month} effective={effective}")
-        return {"monthlyRevenue": effective}
+
+        from app.models.pagador import PagamentoPagadorForma
+        pedidos_ids_month = db.query(PedidoModel.id).filter(*month_filters).subquery()
+        pagamentos_ids_month = db.query(PagamentoModel.id).filter(PagamentoModel.pedido.in_(pedidos_ids_month)).subquery()
+        payment_total = float(db.query(func.coalesce(func.sum(PagamentoPagadorForma.valor), 0)).filter(PagamentoPagadorForma.pagamento_id.in_(pagamentos_ids_month)).scalar() or 0)
+
+        revenue = payment_total if payment_total > 0 else effective
+        print(f"[DEBUG monthly_revenue] month {start_of_month}..{end_of_month} effective={effective} payment_total={payment_total} revenue={revenue}")
+        return {"monthlyRevenue": revenue}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -264,6 +278,13 @@ def daily_revenue_details(
             for method, count, total in pf_rows
         ]
 
+        # Use actual payment totals (PagamentoPagadorForma) as source of truth for revenue.
+        # This correctly reflects service fees (e.g. 10%) that may not be stored in pedido.valor_total.
+        payment_total_sum = sum(row["total"] for row in payment_breakdown)
+        if payment_total_sum > 0:
+            total_revenue = float(payment_total_sum)
+            average_ticket = total_revenue / max(order_count, 1)
+
         resp_date = sd.isoformat() if sd == ed else None
 
         # Soma das quantidades para alinhar com PDF e frontend
@@ -333,13 +354,22 @@ def daily_revenue(db: Session = Depends(get_db)):
     try:
         today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
 
-        # Usar apenas data_pedido/data, nunca criado_em
-        # Use consistent day key
         day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
         today_filters = [day_key == today]
         effective = compute_effective_total(db, today_filters)
-        print(f"[DEBUG daily_revenue] date {today} effective={effective}")
-        return {"dailyRevenue": effective}
+
+        # Use actual payment totals as source of truth (includes service fees)
+        from app.models.pagador import PagamentoPagadorForma
+        pedidos_ids_today = db.query(PedidoModel.id).filter(*today_filters).subquery()
+        pagamentos_ids_today = db.query(PagamentoModel.id).filter(PagamentoModel.pedido.in_(pedidos_ids_today)).subquery()
+        payment_total = db.query(
+            func.coalesce(func.sum(PagamentoPagadorForma.valor), 0)
+        ).filter(PagamentoPagadorForma.pagamento_id.in_(pagamentos_ids_today)).scalar() or 0
+        payment_total = float(payment_total)
+
+        revenue = payment_total if payment_total > 0 else effective
+        print(f"[DEBUG daily_revenue] date {today} effective={effective} payment_total={payment_total} revenue={revenue}")
+        return {"dailyRevenue": revenue}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

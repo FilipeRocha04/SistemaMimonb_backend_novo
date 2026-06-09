@@ -25,6 +25,15 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 # module-level default for remessa status map (per-request handlers will overwrite when available)
 remessa_status_map = {}
+
+def effective_valor_total(subtotal, valor_total, adicional_10) -> float:
+    """Return the correct effective total, applying 10% fee when adicional_10=1."""
+    st = float(subtotal or 0)
+    vt = float(valor_total or 0)
+    if int(adicional_10 or 0) and vt < st * 1.05:
+        return round(st * 1.1, 2)
+    return vt if vt >= st - 0.01 else st
+
 def is_finalized_status(s: str | None) -> bool:
     """Return True if a pedido status represents a finalized (immutable) order.
 
@@ -508,7 +517,7 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             'status': p.status,
             'subtotal': float(p.subtotal or 0),
             'adicional_10': int(p.adicional_10 or 0),
-            'valor_total': float(p.valor_total or 0),
+            'valor_total': effective_valor_total(p.subtotal, p.valor_total, p.adicional_10),
             'pagar_depois': int(p.pagar_depois or 0),
             'observacao': p.observacao,
             'criado_em': p.criado_em,
@@ -605,7 +614,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 'status': r.status,
                 'subtotal': float(r.subtotal or 0),
                 'adicional_10': int(r.adicional_10 or 0),
-                'valor_total': float(r.valor_total or 0),
+                'valor_total': effective_valor_total(r.subtotal, r.valor_total, r.adicional_10),
                 'pagar_depois': int(r.pagar_depois or 0),
                 'observacao': r.observacao,
                 'paid': (r.id in paid_ids),
@@ -692,7 +701,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             'status': r.status,
             'subtotal': float(r.subtotal or 0),
             'adicional_10': int(r.adicional_10 or 0),
-            'valor_total': float(r.valor_total or 0),
+            'valor_total': effective_valor_total(r.subtotal, r.valor_total, r.adicional_10),
             'pagar_depois': int(r.pagar_depois or 0),
             'observacao': r.observacao,
             'paid': is_paid,
@@ -937,7 +946,7 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
-            'valor_total': float(order.valor_total or 0),
+            'valor_total': effective_valor_total(order.subtotal, order.valor_total, order.adicional_10),
             'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
@@ -1105,7 +1114,7 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
-            'valor_total': float(order.valor_total or 0),
+            'valor_total': effective_valor_total(order.subtotal, order.valor_total, order.adicional_10),
             'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
@@ -1323,7 +1332,7 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
-            'valor_total': float(order.valor_total or 0),
+            'valor_total': effective_valor_total(order.subtotal, order.valor_total, order.adicional_10),
             'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
@@ -1426,7 +1435,7 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
 
         # subtract from totals
         try:
-            order.subtotal = float(order.subtotal or 0) - float(item.preco or 0) * int(item.quantidade or 1)
+            order.subtotal = float(order.subtotal or 0) - float(item.preco or 0) * float(item.quantidade or 1)
             # respect adicional_10 flag when computing valor_total
             if getattr(order, 'adicional_10', 0):
                 order.valor_total = round(float(order.subtotal or 0) * 1.1, 2)
@@ -1490,7 +1499,7 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
-            'valor_total': float(order.valor_total or 0),
+            'valor_total': effective_valor_total(order.subtotal, order.valor_total, order.adicional_10),
             'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
@@ -1650,7 +1659,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
-            'valor_total': float(order.valor_total or 0),
+            'valor_total': effective_valor_total(order.subtotal, order.valor_total, order.adicional_10),
             'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
@@ -1789,10 +1798,16 @@ async def update_order(order_id: int, payload: dict = Body(...), db: Session = D
                 subtotal = 0.0
                 for it in (getattr(order, 'items', []) or []):
                     try:
-                        subtotal += float(getattr(it, 'preco', 0) or 0) * int(getattr(it, 'quantidade', 1) or 1)
+                        subtotal += float(getattr(it, 'preco', 0) or 0) * float(getattr(it, 'quantidade', 1) or 1)
                     except Exception:
                         pass
                 order.subtotal = round(subtotal, 2)
+                # Accept adicional_10 from payload when freezing totals at finalization
+                if 'adicional_10' in payload and payload['adicional_10'] is not None:
+                    try:
+                        order.adicional_10 = int(bool(payload['adicional_10']))
+                    except Exception:
+                        pass
                 if getattr(order, 'adicional_10', 0):
                     order.valor_total = round(subtotal * 1.1, 2)
                 else:
@@ -1895,7 +1910,7 @@ async def update_order(order_id: int, payload: dict = Body(...), db: Session = D
             'status': order.status,
             'subtotal': float(order.subtotal or 0),
             'adicional_10': int(order.adicional_10 or 0),
-            'valor_total': float(order.valor_total or 0),
+            'valor_total': effective_valor_total(order.subtotal, order.valor_total, order.adicional_10),
             'pagar_depois': int(order.pagar_depois or 0),
             'observacao': order.observacao,
             'items': [
