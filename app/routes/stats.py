@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, case as sa_case
 from datetime import datetime, timedelta
 
 from app.db.session import get_db
@@ -10,6 +10,42 @@ from app.models.pedido_item import PedidoItem as PedidoItemModel
 from app.core.timezone_utils import BRAZIL_TZ
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
+
+
+def compute_effective_total(db: Session, filters: list) -> float:
+    """Replica a fórmula do frontend: por pedido usa GREATEST(valor_total, soma_dos_itens).
+
+    Isso garante que pedidos com valor_total desatualizado no banco sejam contados
+    pelo valor real dos itens, igual ao que a tela de pedidos exibe.
+    """
+    item_sums_sq = (
+        db.query(
+            PedidoItemModel.pedido_id.label('pedido_id'),
+            func.coalesce(func.sum(PedidoItemModel.quantidade * PedidoItemModel.preco), 0).label('item_sum')
+        )
+        .group_by(PedidoItemModel.pedido_id)
+        .subquery()
+    )
+    result = (
+        db.query(
+            func.coalesce(
+                func.sum(
+                    sa_case(
+                        (
+                            func.coalesce(PedidoModel.valor_total, 0) >= func.coalesce(item_sums_sq.c.item_sum, 0) - 0.01,
+                            func.coalesce(PedidoModel.valor_total, 0)
+                        ),
+                        else_=func.coalesce(item_sums_sq.c.item_sum, 0)
+                    )
+                ),
+                0
+            )
+        )
+        .outerjoin(item_sums_sq, PedidoModel.id == item_sums_sq.c.pedido_id)
+        .filter(*filters)
+        .scalar()
+    )
+    return float(result or 0)
 
 
 # =========================
@@ -31,11 +67,13 @@ def weekly_revenue(db: Session = Depends(get_db)):
             end_of_week = start_of_week + timedelta(days=6)
 
         print(f"[DEBUG] Período semanal: {start_of_week} a {end_of_week}")
-        pedidos = db.query(PedidoModel).filter(PedidoModel.data_pedido >= start_of_week, PedidoModel.data_pedido <= end_of_week).all()
-        print(f"[DEBUG] Pedidos encontrados: {[p.id for p in pedidos]}")
-        total = sum([float(p.valor_total or 0) for p in pedidos])
-        print(f"[DEBUG] Total calculado: {total}")
-        return {"weeklyRevenue": float(total or 0)}
+        # Use consistent day key (data_pedido or data)
+        day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
+
+        week_filters = [day_key >= start_of_week, day_key <= end_of_week]
+        effective = compute_effective_total(db, week_filters)
+        print(f"[DEBUG weekly_revenue] week {start_of_week}..{end_of_week} effective={effective}")
+        return {"weeklyRevenue": effective}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -54,13 +92,13 @@ def monthly_revenue(db: Session = Depends(get_db)):
         else:
             end_of_month = today.replace(month=today.month+1, day=1) - timedelta(days=1)
 
-        total = (
-            db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(PedidoModel.data_pedido >= start_of_month, PedidoModel.data_pedido <= end_of_month)
-            .scalar()
-        )
+        # Use consistent day key
+        day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
 
-        return {"monthlyRevenue": float(total or 0)}
+        month_filters = [day_key >= start_of_month, day_key <= end_of_month]
+        effective = compute_effective_total(db, month_filters)
+        print(f"[DEBUG monthly_revenue] month {start_of_month}..{end_of_month} effective={effective}")
+        return {"monthlyRevenue": effective}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -124,11 +162,11 @@ def daily_revenue_details(
         # ------------------------- 
         # Orders summary
         # -------------------------
-        total_revenue = (
-            db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(*filters)
-            .scalar()
-        ) or 0
+        # Use same day_key as other endpoints
+        day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
+
+        effective_total = compute_effective_total(db, filters)
+        print(f"[DEBUG daily_revenue_details] filters {sd}..{ed} effective={effective_total}")
 
         order_count = (
             db.query(func.count(PedidoModel.id))
@@ -138,7 +176,7 @@ def daily_revenue_details(
 
         print(f"🔍 DEBUG - order_count: {order_count}")
 
-        total_revenue = float(total_revenue)
+        total_revenue = effective_total
         average_ticket = total_revenue / max(order_count, 1)
 
         # -------------------------
@@ -296,13 +334,12 @@ def daily_revenue(db: Session = Depends(get_db)):
         today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
 
         # Usar apenas data_pedido/data, nunca criado_em
-        total = (
-            db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-            .filter(PedidoModel.data_pedido == today)
-            .scalar()
-        )
-
-        return {"dailyRevenue": float(total or 0)}
+        # Use consistent day key
+        day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
+        today_filters = [day_key == today]
+        effective = compute_effective_total(db, today_filters)
+        print(f"[DEBUG daily_revenue] date {today} effective={effective}")
+        return {"dailyRevenue": effective}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -316,15 +353,10 @@ def daily_revenue_comparison(db: Session = Depends(get_db)):
         today = datetime.now(BRAZIL_TZ).date() if BRAZIL_TZ else datetime.utcnow().date()
         yesterday = today - timedelta(days=1)
 
-        def total_for(day):
-            return (
-                db.query(func.coalesce(func.sum(PedidoModel.valor_total), 0))
-                .filter(PedidoModel.data_pedido == day)
-                .scalar()
-            ) or 0
+        day_key = PedidoModel.data_pedido if hasattr(PedidoModel, 'data_pedido') else PedidoModel.data
 
-        t_total = float(total_for(today))
-        y_total = float(total_for(yesterday))
+        t_total = compute_effective_total(db, [day_key == today])
+        y_total = compute_effective_total(db, [day_key == yesterday])
 
         change_pct = ((t_total - y_total) / y_total * 100) if y_total > 0 else (100 if t_total > 0 else 0)
 
