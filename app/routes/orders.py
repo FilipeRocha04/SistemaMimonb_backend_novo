@@ -582,6 +582,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
         rows = query.order_by(PedidoModel.id.desc()).all()
         # Preload payment status for all pedidos in this page to avoid N+1 queries from the frontend
         paid_ids = set()
+        payment_methods_map: dict = {}
         try:
             order_ids = [r.id for r in rows]
             if order_ids:
@@ -592,9 +593,27 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                     st = str(getattr(p, 'status', '') or '').lower()
                     if 'pago' in st or 'paid' in st:
                         paid_ids.add(getattr(p, 'pedido', None))
+                # Preload payment methods with values for all orders in this page
+                from app.models.pagador import PagamentoPagadorForma as PagamentoPagadorFormaModel
+                pf_rows = (
+                    db.query(
+                        PagamentoModel.pedido,
+                        PagamentoPagadorFormaModel.forma_pagamento,
+                        func.coalesce(func.sum(PagamentoPagadorFormaModel.valor), 0).label('total'),
+                    )
+                    .join(PagamentoPagadorFormaModel, PagamentoPagadorFormaModel.pagamento_id == PagamentoModel.id)
+                    .filter(PagamentoModel.pedido.in_(order_ids))
+                    .group_by(PagamentoModel.pedido, PagamentoPagadorFormaModel.forma_pagamento)
+                    .all()
+                )
+                for pedido_id, forma, total in pf_rows:
+                    if pedido_id not in payment_methods_map:
+                        payment_methods_map[pedido_id] = []
+                    if forma:
+                        payment_methods_map[pedido_id].append({'forma': forma, 'valor': float(total)})
         except Exception:
-            # non-fatal: if payments fetch fails, leave paid_ids empty
             paid_ids = set()
+            payment_methods_map = {}
         out = []
         for r in rows:
             # fetch remessas early so we can annotate each item with its remessa status
@@ -618,6 +637,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 'pagar_depois': int(r.pagar_depois or 0),
                 'observacao': r.observacao,
                 'paid': (r.id in paid_ids),
+                'formas_pagamento': payment_methods_map.get(r.id, []),
                 'numero_diario': getattr(r, 'numero_diario', None),
                 'data_pedido': str(getattr(r, 'data_pedido', None)) if getattr(r, 'data_pedido', None) else None,
                 'items': [
@@ -678,8 +698,9 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
         except Exception:
             rems = []
 
-        # Determine paid status for this order
+        # Determine paid status and payment methods for this order
         is_paid = False
+        order_formas_pagamento: list = []
         try:
             pays = db.query(PagamentoModel).filter(PagamentoModel.pedido == r.id).all()
             for p in pays:
@@ -687,8 +708,24 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
                 if 'pago' in st or 'paid' in st:
                     is_paid = True
                     break
+            from app.models.pagador import PagamentoPagadorForma as PagamentoPagadorFormaModel
+            pay_ids = [p.id for p in pays]
+            if pay_ids:
+                pf_rows = (
+                    db.query(
+                        PagamentoPagadorFormaModel.forma_pagamento,
+                        func.coalesce(func.sum(PagamentoPagadorFormaModel.valor), 0).label('total'),
+                    )
+                    .filter(PagamentoPagadorFormaModel.pagamento_id.in_(pay_ids))
+                    .group_by(PagamentoPagadorFormaModel.forma_pagamento)
+                    .all()
+                )
+                for forma, total in pf_rows:
+                    if forma:
+                        order_formas_pagamento.append({'forma': forma, 'valor': float(total)})
         except Exception:
             is_paid = False
+            order_formas_pagamento = []
 
         d = {
             'id': r.id,
@@ -705,6 +742,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             'pagar_depois': int(r.pagar_depois or 0),
             'observacao': r.observacao,
             'paid': is_paid,
+            'formas_pagamento': order_formas_pagamento,
             'numero_diario': getattr(r, 'numero_diario', None),
             'data_pedido': str(getattr(r, 'data_pedido', None)) if getattr(r, 'data_pedido', None) else None,
             'items': [
