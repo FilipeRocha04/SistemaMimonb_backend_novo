@@ -555,7 +555,7 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
 @router.get("", response_model=List[PedidoRead])
 @router.get("", response_model=List[PedidoRead])
 @router.get("/", response_model=List[PedidoRead])
-def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: str = None):
+def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: str = None, active_only: bool = False):
     try:
         query = db.query(PedidoModel).options(joinedload(PedidoModel.items), joinedload(PedidoModel.cliente))
 
@@ -570,12 +570,23 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
             if start_utc and end_utc:
                 query = query.filter(PedidoModel.criado_em >= start_utc, PedidoModel.criado_em <= end_utc)
 
+        # active_only: usado pela tela da cozinha para evitar buscar/reprocessar
+        # todo o histórico de pedidos a cada atualização. Restringe a pedidos de
+        # hoje que ainda não foram finalizados (pago/entregue).
+        if active_only:
+            today_str = datetime.now(BRAZIL_TZ).strftime('%Y-%m-%d')
+            start_utc, end_utc = local_day_range_to_utc(today_str)
+            if start_utc and end_utc:
+                query = query.filter(PedidoModel.criado_em >= start_utc, PedidoModel.criado_em <= end_utc)
+            query = query.filter(func.lower(PedidoModel.status).notin_(['pago', 'entregue']))
+
         rows = query.order_by(PedidoModel.id.desc()).all()
+        order_ids = [r.id for r in rows]
+
         # Preload payment status for all pedidos in this page to avoid N+1 queries from the frontend
         paid_ids = set()
         payment_methods_map: dict = {}
         try:
-            order_ids = [r.id for r in rows]
             if order_ids:
                 pays = db.query(PagamentoModel).filter(
                     PagamentoModel.pedido.in_(order_ids)
@@ -605,13 +616,63 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
         except Exception:
             paid_ids = set()
             payment_methods_map = {}
+
+        # Preload remessas for all pedidos in this page to avoid N+1 queries
+        remessas_map: dict = {}
+        try:
+            if order_ids:
+                all_rems = (
+                    db.query(PedidoRemessaModel)
+                    .filter(PedidoRemessaModel.pedido_id.in_(order_ids))
+                    .order_by(PedidoRemessaModel.pedido_id.asc(), PedidoRemessaModel.id.asc())
+                    .all()
+                )
+                for rem in all_rems:
+                    remessas_map.setdefault(rem.pedido_id, []).append(rem)
+        except Exception:
+            remessas_map = {}
+
+        # Preload product categories for all items in this page to avoid N+1 queries
+        categoria_map: dict = {}
+        try:
+            produto_ids = {
+                it.produto_id
+                for r in rows
+                for it in (getattr(r, 'items', []) or [])
+                if getattr(it, 'produto_id', None)
+            }
+            if produto_ids:
+                for prod in db.query(ProdutoModel).filter(ProdutoModel.id.in_(produto_ids)).all():
+                    categoria_map[prod.id] = getattr(prod, 'categoria', None)
+        except Exception:
+            categoria_map = {}
+
+        def _categoria_for_item(it):
+            prod_id = getattr(it, 'produto_id', None)
+            if prod_id and prod_id in categoria_map:
+                return categoria_map[prod_id]
+            # fallback raro: item sem produto_id (match por nome), preço da consulta individual
+            return resolve_categoria_for_item(it, db)
+
         out = []
         for r in rows:
-            # fetch remessas early so we can annotate each item with its remessa status
-            try:
-                rems = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == r.id).order_by(PedidoRemessaModel.id.asc()).all()
-            except Exception:
-                rems = []
+            rems_list = remessas_map.get(r.id, [])
+
+            items_out = []
+            for it in (getattr(r, 'items', []) or []):
+                categoria = _categoria_for_item(it)
+                items_out.append({
+                    'id': it.id,
+                    'remessa_id': getattr(it, 'remessa_id', None),
+                    'status': getattr(it, 'status', None),
+                    'produto_id': it.produto_id,
+                    'name': it.nome,
+                    'quantity': it.quantidade,
+                    'price': float(it.preco),
+                    'observation': it.observacao,
+                    'categoria': categoria,
+                    'category': categoria,
+                })
 
             d = {
                 'id': r.id,
@@ -631,45 +692,23 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 'formas_pagamento': payment_methods_map.get(r.id, []),
                 'numero_diario': getattr(r, 'numero_diario', None),
                 'data_pedido': str(getattr(r, 'data_pedido', None)) if getattr(r, 'data_pedido', None) else None,
-                'items': [
-                    {
-                        'id': it.id,
-                        'remessa_id': getattr(it, 'remessa_id', None),
-                        'status': getattr(it, 'status', None),
-                        'produto_id': it.produto_id,
-                        'name': it.nome,
-                        'quantity': it.quantidade,
-                        'price': float(it.preco),
-                        'observation': it.observacao,
-                        'categoria': resolve_categoria_for_item(it, db),
-                        'category': resolve_categoria_for_item(it, db),
-                    }
-                    for it in (getattr(r, 'items', []) or [])
-                ],
+                'items': items_out,
                 'criado_em': to_brasilia(r.criado_em),
                 'atualizado_em': getattr(r, 'atualizado_em', None),
             }
-            # include remessas for each pedido (if any)
-            try:
-                if 'rems' in locals():
-                    rems_list = rems
-                else:
-                    rems_list = db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == r.id).order_by(PedidoRemessaModel.id.asc()).all()
-                d['remessas'] = [
-                    {
-                        'id': rr.id,
-                        'pedido_id': getattr(rr, 'pedido_id', None),
-                        'observacao': getattr(rr, 'observacao_remessa', None),
-                        'endereco': getattr(rr, 'endereco', None),
-                        'tipo': getattr(rr, 'tipo', 'local'),
-                        'status': getattr(rr, 'status', 'pendente'),
-                        # use remessa creation time, not the pedido time
-                        'criado_em': to_brasilia(rr.criado_em),
-                    }
-                    for rr in rems_list
-                ]
-            except Exception:
-                d['remessas'] = []
+            d['remessas'] = [
+                {
+                    'id': rr.id,
+                    'pedido_id': getattr(rr, 'pedido_id', None),
+                    'observacao': getattr(rr, 'observacao_remessa', None),
+                    'endereco': getattr(rr, 'endereco', None),
+                    'tipo': getattr(rr, 'tipo', 'local'),
+                    'status': getattr(rr, 'status', 'pendente'),
+                    # use remessa creation time, not the pedido time
+                    'criado_em': to_brasilia(rr.criado_em),
+                }
+                for rr in rems_list
+            ]
             out.append(d)
         return out
     except Exception as e:
