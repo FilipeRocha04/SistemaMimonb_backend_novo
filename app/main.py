@@ -193,6 +193,8 @@ from app.core.config import settings
 from app.routes.orders_last_updated import router as orders_last_updated_router
 from fastapi import FastAPI, Request
 import time
+from fastapi.responses import PlainTextResponse
+
 
 
 # Logger
@@ -322,6 +324,12 @@ app.include_router(pagamentos_itens.router)
 @app.on_event("startup")
 def on_startup():
     db_session.create_db()
+
+@app.get("/loaderio-2e84d0b509c246e5778c61b55e9bf194.txt")
+def loaderio_verification():
+    return PlainTextResponse(
+        "loaderio-2e84d0b509c246e5778c61b55e9bf194"
+    )
 
 @app.get("/")
 def root():
