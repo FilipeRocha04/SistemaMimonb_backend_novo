@@ -2,6 +2,8 @@ import asyncio
 from typing import List, Any
 from starlette.websockets import WebSocket
 
+from app.utils import redis_bus
+
 # In-memory pub/sub: support both EventSource (asyncio.Queue) and WebSocket clients
 _subscribers: List[asyncio.Queue] = []
 _websockets: List[WebSocket] = []
@@ -34,7 +36,9 @@ def unregister_ws(ws: WebSocket) -> None:
         pass
 
 
-async def publish(event: Any) -> None:
+async def publish_local(event: Any) -> None:
+    """Entrega o evento aos assinantes (SSE/WebSocket) conectados a ESTE
+    processo/worker."""
     # small debug print to help trace events in dev
     try:
         print(f"[pubsub] publish event: {event.get('type') if isinstance(event, dict) else str(type(event))}")
@@ -59,6 +63,15 @@ async def publish(event: Any) -> None:
                 _websockets.remove(ws)
             except Exception:
                 pass
+
+
+async def publish(event: Any) -> None:
+    """Função pública usada pelas rotas. Publica no Redis para que todos os
+    workers do gunicorn entreguem o evento aos seus próprios assinantes; sem
+    Redis configurado, cai para a entrega local direta (como antes)."""
+    published = await redis_bus.try_publish("kitchen_event", event)
+    if not published:
+        await publish_local(event)
 
 
 def get_status() -> dict:

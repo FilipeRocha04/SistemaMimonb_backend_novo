@@ -160,6 +160,7 @@ from app.routes import stats as stats_routes
 # Adiciona SessionMiddleware para OAuth
 import os
 import time
+import asyncio
 import logging
 from fastapi import FastAPI, Request
 from starlette.middleware.sessions import SessionMiddleware
@@ -322,8 +323,20 @@ from app.routes import pagamentos_itens
 app.include_router(pagamentos_itens.router)
 # =========================
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     db_session.create_db()
+    # Captura o loop principal para permitir que as rotas de pedidos (sync,
+    # rodando em threadpool) agendem notificações WebSocket de forma segura.
+    orders_ws.set_main_loop(asyncio.get_running_loop())
+    # Escuta o Redis (se configurado) para repassar eventos de pedidos/cozinha
+    # aos clientes WebSocket/SSE conectados a ESTE worker, mesmo quando o
+    # evento foi originado por outro worker do gunicorn.
+    from app.utils import redis_bus
+    from app.utils.pubsub import publish_local
+    redis_bus.start_listener({
+        "orders_update": orders_ws.broadcast_local,
+        "kitchen_event": publish_local,
+    })
 
 @app.get("/loaderio-2e84d0b509c246e5778c61b55e9bf194.txt")
 def loaderio_verification():

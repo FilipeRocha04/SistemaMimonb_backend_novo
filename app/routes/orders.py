@@ -8,7 +8,7 @@ import logging
 
 from app.db.session import get_db
 from app.utils.pubsub import publish
-from app.routes.orders_ws import notify_orders_update
+from app.routes.orders_ws import notify_orders_update, schedule_coroutine
 from app.models.product import Produto as ProdutoModel
 from app.models.client import Cliente as ClienteModel
 import asyncio
@@ -313,7 +313,7 @@ def to_brasilia(dt):
 
 @router.post("", response_model=PedidoRead)
 @router.post("/", response_model=PedidoRead)
-async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
+def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
     try:
         # map incoming payload to existing pedidos table columns
         # Determine initial remessa type from payload.delivery; do not persist on Pedido
@@ -479,12 +479,7 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                     }
                 }
                 # schedule publish without awaiting to avoid blocking
-                try:
-                    asyncio.create_task(publish(event))
-                except RuntimeError:
-                    # fallback: run publish in event loop if possible
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(publish(event))
+                schedule_coroutine(publish(event))
         except Exception:
             # best-effort; don't block order creation on pubsub failures
             pass
@@ -547,11 +542,7 @@ async def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             },
         }
         # Notifica clientes WebSocket sobre novo pedido
-        try:
-            import asyncio
-            asyncio.create_task(notify_orders_update())
-        except Exception:
-            pass
+        schedule_coroutine(notify_orders_update())
         return data
     except Exception as e:
         db.rollback()
@@ -854,11 +845,7 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
         db.delete(order)
         db.commit()
         # Notifica clientes WebSocket sobre remoção de pedido
-        try:
-            import asyncio
-            asyncio.create_task(notify_orders_update())
-        except Exception:
-            pass
+        schedule_coroutine(notify_orders_update())
         return
     except HTTPException:
         raise
@@ -869,7 +856,7 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{order_id}/remessas", response_model=PedidoRead)
-async def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends(get_db)):
+def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends(get_db)):
     """Create a per-pedido remessa and optionally associate existing items to it.
 
     Expected payload: { item_ids: [1,2,3], observacao?: str, endereco?: str }
@@ -959,11 +946,7 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
                         'remessa_id': getattr(it, 'remessa_id', None),
                     }
                 }
-                try:
-                    asyncio.create_task(publish(event))
-                except RuntimeError:
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(publish(event))
+                schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1029,12 +1012,7 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
             d['category_status'] = {}
 
         # Notifica clientes WebSocket sobre nova remessa
-        try:
-            import asyncio
-            from app.routes.orders_ws import notify_orders_update
-            asyncio.create_task(notify_orders_update())
-        except Exception:
-            pass
+        schedule_coroutine(notify_orders_update())
         return d
     except HTTPException:
         raise
@@ -1045,7 +1023,7 @@ async def create_remessa_for_order(order_id: int, payload: dict, db: Session = D
 
 
 @router.patch("/{order_id}/remessas/{remessa_id}", response_model=PedidoRead)
-async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict, db: Session = Depends(get_db)):
     """Update an existing remessa for a pedido (status/observacao/endereco) without creating a new one.
 
     Expected payload: { status?: str, observacao?: str, endereco?: str }
@@ -1122,18 +1100,9 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
                 }
             }
             # PATCH: notifica via WebSocket orders_ws
-            try:
-                from app.routes.orders_ws import notify_orders_update
-                import asyncio
-                asyncio.create_task(notify_orders_update())
-            except Exception:
-                pass
+            schedule_coroutine(notify_orders_update())
             # Mantém publish para outros listeners
-            try:
-                asyncio.create_task(publish(event))
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.create_task(publish(event))
+            schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1206,7 +1175,7 @@ async def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict
 
 
 @router.post("/{order_id}/items", response_model=PedidoRead)
-async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends(get_db)):
+def add_items_to_order(order_id: int, payload: dict, db: Session = Depends(get_db)):
     """Append items to an existing pedido (used by frontend 'Adicionar' action).
 
     Expected payload: { items: [ { id, name, quantity, price, observation }, ... ] }
@@ -1289,11 +1258,7 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
                         'categoria': categoria,
                     }
                 }
-                try:
-                    asyncio.create_task(publish(event))
-                except RuntimeError:
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(publish(event))
+                schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1400,7 +1365,7 @@ async def add_items_to_order(order_id: int, payload: dict, db: Session = Depends
 
 
 @router.delete("/{order_id}")
-async def delete_order(order_id: int, db: Session = Depends(get_db)):
+def delete_order(order_id: int, db: Session = Depends(get_db)):
     try:
         order = db.query(PedidoModel).filter(PedidoModel.id == order_id).first()
         if not order:
@@ -1428,11 +1393,7 @@ async def delete_order(order_id: int, db: Session = Depends(get_db)):
         # notify kitchen to remove order/items
         try:
             event = {'type': 'order', 'action': 'deleted', 'order_id': order_id}
-            try:
-                asyncio.create_task(publish(event))
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.create_task(publish(event))
+            schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1446,7 +1407,7 @@ async def delete_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{order_id}/items/{item_id}", response_model=PedidoRead)
-async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(get_db)):
+def delete_order_item(order_id: int, item_id: int, db: Session = Depends(get_db)):
     try:
         order = db.query(PedidoModel).options(joinedload(PedidoModel.items)).filter(PedidoModel.id == order_id).first()
         if not order:
@@ -1513,11 +1474,7 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
                 'order_id': order.id,
                 'item': {**item_payload, 'categoria': categoria}
             }
-            try:
-                asyncio.create_task(publish(event))
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.create_task(publish(event))
+            schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1567,7 +1524,7 @@ async def delete_order_item(order_id: int, item_id: int, db: Session = Depends(g
 
 
 @router.patch("/{order_id}/items/{item_id}", response_model=PedidoRead)
-async def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: Session = Depends(get_db)):
     """Update quantity, price, or price factor of an order item and recompute totals.
 
     Expected payload:
@@ -1679,11 +1636,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
                     'categoria': categoria,
                 }
             }
-            try:
-                asyncio.create_task(publish(event))
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.create_task(publish(event))
+            schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1728,7 +1681,7 @@ async def update_order_item_quantity(order_id: int, item_id: int, payload: dict,
 
 
 @router.patch("/{order_id}", response_model=PedidoRead)
-async def update_order(order_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+def update_order(order_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
     """Update top-level order fields such as status.
 
     Expected payload example: { "status": "preparando" }
@@ -1918,11 +1871,7 @@ async def update_order(order_id: int, payload: dict = Body(...), db: Session = D
                 'cliente_id': order.cliente_id,
                 'cliente_nome': client_name,
             }
-            try:
-                asyncio.create_task(publish(event))
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.create_task(publish(event))
+            schedule_coroutine(publish(event))
         except Exception:
             pass
 
@@ -1933,11 +1882,7 @@ async def update_order(order_id: int, payload: dict = Body(...), db: Session = D
             rems = []
 
         # Notifica clientes WebSocket sobre atualização de pedido
-        try:
-            import asyncio
-            asyncio.create_task(notify_orders_update())
-        except Exception:
-            pass
+        schedule_coroutine(notify_orders_update())
         return {
             'id': order.id,
             'cliente_id': order.cliente_id,

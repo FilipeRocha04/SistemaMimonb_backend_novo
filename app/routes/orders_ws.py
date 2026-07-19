@@ -1,10 +1,40 @@
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import List
+from typing import List, Optional
+
+from app.utils import redis_bus
 
 router = APIRouter()
 
 # Lista global de conexões WebSocket ativas
 active_connections: List[WebSocket] = []
+
+# Loop principal (asyncio) do processo, capturado no startup do FastAPI.
+# Necessário porque as rotas de pedidos são funções sync e rodam numa
+# threadpool (sem event loop próprio), então não podem usar
+# asyncio.create_task diretamente para notificar os clientes WebSocket.
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    global _main_loop
+    _main_loop = loop
+
+
+def schedule_coroutine(coro) -> None:
+    """Agenda uma coroutine no loop principal, de forma thread-safe.
+
+    Funciona tanto quando chamado de dentro do event loop (rotas async)
+    quanto de uma thread da threadpool (rotas sync), que é o caso comum
+    das rotas de pedidos hoje.
+    """
+    if _main_loop is None:
+        coro.close()
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(coro, _main_loop)
+    except Exception:
+        coro.close()
 
 @router.websocket("/ws/orders")
 async def websocket_orders(websocket: WebSocket):
@@ -18,8 +48,8 @@ async def websocket_orders(websocket: WebSocket):
         if websocket in active_connections:
             active_connections.remove(websocket)
 
-# Função utilitária para notificar todos os clientes conectados
-async def notify_orders_update():
+# Notifica apenas os clientes WebSocket conectados a ESTE processo/worker.
+async def broadcast_local(_payload: dict | None = None) -> None:
     for ws in list(active_connections):
         try:
             await ws.send_text("update")
@@ -28,3 +58,12 @@ async def notify_orders_update():
                 active_connections.remove(ws)
             except Exception:
                 pass
+
+
+# Função pública chamada pelas rotas de pedidos. Publica no Redis para que
+# TODOS os workers do gunicorn avisem seus próprios clientes; se o Redis não
+# estiver configurado (ex: dev local), cai para o broadcast local de sempre.
+async def notify_orders_update():
+    published = await redis_bus.try_publish("orders_update", {})
+    if not published:
+        await broadcast_local()
