@@ -11,6 +11,8 @@ class PedidoItem(Base):
     pedido_id = Column(BigInteger, ForeignKey('pedidos.id'), nullable=False)
     # optional association to a per-pedido remessa (shipment/partial delivery)
     remessa_id = Column(BigInteger, ForeignKey('pedido_remessas.id'), nullable=True)
+    # optional association to a "prato" (plate): groups items assembled together
+    prato_id = Column(BigInteger, ForeignKey('pratos.id'), nullable=True)
     produto_id = Column(BigInteger, nullable=True)
     nome = Column(String(255), nullable=False)
     quantidade = Column(Numeric(4, 2), nullable=False, default=1.0)

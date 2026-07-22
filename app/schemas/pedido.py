@@ -2,17 +2,24 @@ from pydantic import BaseModel
 from typing import Optional, List, Any
 from datetime import date, time, datetime
 from app.schemas.pedido_remessa import PedidoRemessaRead
+from app.schemas.prato import PratoRead, PratoGroupCreate
 
 
 class PedidoItem(BaseModel):
     id: Optional[int] = None
     remessa_id: Optional[int] = None
+    prato_id: Optional[int] = None
     # produto_id do item, usado para resolver categoria
     produto_id: Optional[int] = None
     name: str
     quantity: float
     price: float
     observation: Optional[str] = None
+    # Referência client-side opcional (ver PratoGroupCreate.client_refs),
+    # usada para correlacionar este item com o pedido_item real que será
+    # criado a partir dele, quando a quantidade de um mesmo produto é
+    # dividida entre pratos diferentes.
+    client_ref: Optional[str] = None
     # categoria/categoria normalizada vinda do backend
     categoria: Optional[str] = None
     category: Optional[str] = None
@@ -39,6 +46,9 @@ class PedidoCreate(PedidoBase):
     # Optional per-remessa observation. When provided, a PedidoRemessa row
     # will be created associated with the new Pedido.
     remessa_observacao: Optional[str] = None
+    # Grupos opcionais de itens (por produto_id) a agrupar em "pratos" já na
+    # criação do pedido, associados à remessa inicial criada automaticamente.
+    pratos: Optional[List[PratoGroupCreate]] = None
 
 
 class PedidoRead(BaseModel):
@@ -56,6 +66,7 @@ class PedidoRead(BaseModel):
     observacao: Optional[str]
     items: Optional[List[PedidoItem]] = []
     remessas: Optional[List[PedidoRemessaRead]] = []
+    pratos: Optional[List[PratoRead]] = []
     criado_em: Optional[datetime] = None
     atualizado_em: Optional[datetime] = None
 

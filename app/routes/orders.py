@@ -17,6 +17,7 @@ from app.models.pedido_item import PedidoItem
 from app.schemas.pedido import PedidoCreate, PedidoRead
 from app.models.pagamento import Pagamento as PagamentoModel
 from app.models.pedido_remessa import PedidoRemessa as PedidoRemessaModel
+from app.models.prato import Prato as PratoModel
 from app.models.pedido_categoria_status import PedidoCategoriaStatus as PedidoCategoriaStatusModel
 from datetime import timezone, datetime
 from app.core.timezone_utils import local_day_range_to_utc, BRAZIL_TZ
@@ -355,6 +356,10 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
 
         # attach items as PedidoItem objects (normalized table)
         items_payload = getattr(payload, 'items', []) or []
+        # Mapa client_ref -> PedidoItem, usado depois (já com id atribuído
+        # pelo commit abaixo) para correlacionar pratos com precisão quando a
+        # quantidade de um mesmo produto foi dividida em mais de uma linha.
+        client_ref_to_item: dict = {}
         for it in items_payload:
             # handle both pydantic objects and plain dicts
             name = getattr(it, 'name', None) or (it.get('name') if isinstance(it, dict) else None) or (it.get('nome') if isinstance(it, dict) else None)
@@ -383,6 +388,9 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             if qty > 0:
                 item_model = PedidoItem(produto_id=prod_id, nome=name or '', quantidade=qty, preco=price, observacao=obs, status='pendente')
                 p.items.append(item_model)
+                client_ref = getattr(it, 'client_ref', None) or (it.get('client_ref') if isinstance(it, dict) else None)
+                if client_ref:
+                    client_ref_to_item[str(client_ref)] = item_model
                 try:
                     subtotal += float(price) * float(qty)
                 except Exception:
@@ -391,6 +399,9 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         db.add(p)
         db.commit()
         db.refresh(p)
+        # client_ref -> id real do pedido_item, agora que o commit acima
+        # atribuiu ids autoincrementados aos objetos ORM já em memória.
+        client_ref_to_item_id = {ref: m.id for ref, m in client_ref_to_item.items() if getattr(m, 'id', None)}
 
         # Now that items are persisted, compute and freeze initial totals based on snapshots
         try:
@@ -407,6 +418,7 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
             pass
 
         # Always create an initial remessa for the order and store type there
+        pr = None
         try:
             rem_obs = getattr(payload, 'remessa_observacao', None)
             delivery_addr = getattr(payload, 'deliveryAddress', None)
@@ -432,6 +444,58 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         except Exception:
             # non-fatal: don't block order creation if remessa persistence fails
             db.rollback()
+
+        # Monta "pratos" (agrupamentos de itens) já na criação do pedido, se
+        # enviados. Preferencialmente correlaciona via client_refs (ver
+        # PedidoItem.client_ref), que identifica com precisão cada linha de
+        # item mesmo quando um mesmo produto foi dividido em mais de uma
+        # linha entre pratos diferentes. Se o grupo não enviar client_refs
+        # (clientes antigos), cai para o esquema legado: item_ids referencia
+        # o produto (mesmo id usado em items[].id no payload) e só suporta um
+        # produto pertencendo a um único prato por inteiro.
+        try:
+            pratos_payload = getattr(payload, 'pratos', None) or []
+            if pratos_payload and pr is not None:
+                items_rows = db.query(PedidoItem).filter(PedidoItem.pedido_id == p.id).all()
+                produto_to_item_id = {
+                    it_row.produto_id: it_row.id for it_row in items_rows if it_row.produto_id is not None
+                }
+                for group in pratos_payload:
+                    # group é um PratoGroupCreate (Pydantic) quando vem via
+                    # PedidoCreate; aceita também dict por segurança.
+                    group_item_ids = getattr(group, 'item_ids', None)
+                    if group_item_ids is None and isinstance(group, dict):
+                        group_item_ids = group.get('item_ids')
+                    group_item_ids = group_item_ids or []
+                    group_client_refs = getattr(group, 'client_refs', None)
+                    if group_client_refs is None and isinstance(group, dict):
+                        group_client_refs = group.get('client_refs')
+                    group_client_refs = group_client_refs or []
+                    group_observacao = getattr(group, 'observacao', None)
+                    if group_observacao is None and isinstance(group, dict):
+                        group_observacao = group.get('observacao')
+                    real_ids = [client_ref_to_item_id[r] for r in group_client_refs if r in client_ref_to_item_id]
+                    if not real_ids:
+                        real_ids = [produto_to_item_id[pid] for pid in group_item_ids if pid in produto_to_item_id]
+                    if not real_ids:
+                        continue
+                    prato = PratoModel(pedido_id=p.id, remessa_id=pr.id, observacao=group_observacao)
+                    db.add(prato)
+                    db.commit()
+                    db.refresh(prato)
+                    db.query(PedidoItem).filter(PedidoItem.id.in_(real_ids)).update(
+                        {'prato_id': prato.id}, synchronize_session=False
+                    )
+                    db.commit()
+        except Exception:
+            logging.exception("Failed to create pratos for new order %s", p.id)
+
+        # Recarrega o pedido para que p.items reflita o prato_id recém-setado
+        # (o UPDATE em lote acima não atualiza os objetos já carregados na sessão).
+        try:
+            db.refresh(p)
+        except Exception:
+            pass
 
         # initialize per-categoria status rows (pendente) based on items present
         try:
@@ -501,7 +565,20 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                 })
         except Exception:
             remessas_list = []
-            
+
+        pratos_list = []
+        try:
+            prato_rows = db.query(PratoModel).filter(PratoModel.pedido_id == p.id).order_by(PratoModel.id.asc()).all()
+            for pr_row in prato_rows:
+                pratos_list.append({
+                    'id': pr_row.id,
+                    'pedido_id': pr_row.pedido_id,
+                    'remessa_id': pr_row.remessa_id,
+                    'observacao': pr_row.observacao,
+                    'criado_em': to_brasilia(pr_row.criado_em),
+                })
+        except Exception:
+            pratos_list = []
 
         data = {
             'id': p.id,
@@ -523,6 +600,7 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -535,6 +613,7 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                 for it in p.items
             ],
             'remessas': remessas_list,
+            'pratos': pratos_list,
             # include per-categoria statuses (optional for clients)
             'category_status': {
                 'pizza': db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == p.id, PedidoCategoriaStatusModel.categoria == 'pizza').first().status if db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == p.id, PedidoCategoriaStatusModel.categoria == 'pizza').first() else None,
@@ -632,6 +711,21 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
         except Exception:
             remessas_map = {}
 
+        # Preload pratos for all pedidos in this page to avoid N+1 queries
+        pratos_map: dict = {}
+        try:
+            if order_ids:
+                all_pratos = (
+                    db.query(PratoModel)
+                    .filter(PratoModel.pedido_id.in_(order_ids))
+                    .order_by(PratoModel.pedido_id.asc(), PratoModel.id.asc())
+                    .all()
+                )
+                for prato in all_pratos:
+                    pratos_map.setdefault(prato.pedido_id, []).append(prato)
+        except Exception:
+            pratos_map = {}
+
         # Preload product categories for all items in this page to avoid N+1 queries
         categoria_map: dict = {}
         try:
@@ -657,6 +751,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
         out = []
         for r in rows:
             rems_list = remessas_map.get(r.id, [])
+            pratos_list = pratos_map.get(r.id, [])
 
             items_out = []
             for it in (getattr(r, 'items', []) or []):
@@ -664,6 +759,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                 items_out.append({
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -708,6 +804,16 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                     'criado_em': to_brasilia(rr.criado_em),
                 }
                 for rr in rems_list
+            ]
+            d['pratos'] = [
+                {
+                    'id': p.id,
+                    'pedido_id': p.pedido_id,
+                    'remessa_id': p.remessa_id,
+                    'observacao': p.observacao,
+                    'criado_em': to_brasilia(p.criado_em),
+                }
+                for p in pratos_list
             ]
             out.append(d)
         return out
@@ -779,6 +885,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -809,6 +916,20 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
             ]
         except Exception:
             d['remessas'] = []
+        try:
+            pratos = db.query(PratoModel).filter(PratoModel.pedido_id == r.id).order_by(PratoModel.id.asc()).all()
+            d['pratos'] = [
+                {
+                    'id': p.id,
+                    'pedido_id': p.pedido_id,
+                    'remessa_id': p.remessa_id,
+                    'observacao': p.observacao,
+                    'criado_em': to_brasilia(p.criado_em),
+                }
+                for p in pratos
+            ]
+        except Exception:
+            d['pratos'] = []
         print(f"[DEBUG BACKEND] GET /orders/{order_id} - Retornando resposta: pagar_depois={d.get('pagar_depois')}")
         return d
     except HTTPException:
@@ -829,6 +950,12 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Pedido not found")
 
         # Delete related remessas first (if any), then items, per-categoria statuses, pagamentos, detalhes_pagamento, then the order itself.
+        try:
+            # pratos referenciam remessas via FK; apagar antes de apagar as remessas
+            db.query(PratoModel).filter(PratoModel.pedido_id == order.id).delete()
+        except Exception:
+            pass
+
         try:
             db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == order.id).delete()
         except Exception:
@@ -940,6 +1067,32 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
                 db.add(it)
                 moved_items.append(it)
             db.commit()
+
+        # Monta "pratos" (agrupamentos de itens desta remessa), se solicitado.
+        # Cada grupo em payload['pratos'] deve ser {item_ids: [...], observacao?}
+        # com item_ids sendo subconjunto dos itens movidos para esta remessa.
+        try:
+            prato_groups = payload.get('pratos') or []
+            moved_ids = {it.id for it in moved_items}
+            for group in prato_groups:
+                group_item_ids = [i for i in (group.get('item_ids') or []) if i in moved_ids]
+                if not group_item_ids:
+                    continue
+                prato = PratoModel(
+                    pedido_id=order.id,
+                    remessa_id=pr.id,
+                    observacao=group.get('observacao'),
+                )
+                db.add(prato)
+                db.commit()
+                db.refresh(prato)
+                db.query(PedidoItem).filter(PedidoItem.id.in_(group_item_ids)).update(
+                    {'prato_id': prato.id}, synchronize_session=False
+                )
+                db.commit()
+        except Exception:
+            logging.exception("Failed to create pratos for remessa %s", pr.id)
+
         # Recalcular status do pedido com base nos itens após atualização
         try:
             recompute_order_status_from_items(db, order)
@@ -983,6 +1136,7 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
                         'observation': it.observacao,
                         'categoria': categoria,
                         'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     }
                 }
                 schedule_coroutine(publish(event))
@@ -1013,6 +1167,7 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -1043,6 +1198,20 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
             ]
         except Exception:
             d['remessas'] = []
+        try:
+            pratos = db.query(PratoModel).filter(PratoModel.pedido_id == order.id).order_by(PratoModel.id.asc()).all()
+            d['pratos'] = [
+                {
+                    'id': p.id,
+                    'pedido_id': p.pedido_id,
+                    'remessa_id': p.remessa_id,
+                    'observacao': p.observacao,
+                    'criado_em': to_brasilia(p.criado_em),
+                }
+                for p in pratos
+            ]
+        except Exception:
+            d['pratos'] = []
         # include per-categoria statuses (optional)
         try:
             cat_rows = db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == order.id).all()
@@ -1167,6 +1336,7 @@ def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict, db: 
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -1197,6 +1367,20 @@ def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict, db: 
             ]
         except Exception:
             d['remessas'] = []
+        try:
+            pratos = db.query(PratoModel).filter(PratoModel.pedido_id == order.id).order_by(PratoModel.id.asc()).all()
+            d['pratos'] = [
+                {
+                    'id': p.id,
+                    'pedido_id': p.pedido_id,
+                    'remessa_id': p.remessa_id,
+                    'observacao': p.observacao,
+                    'criado_em': to_brasilia(p.criado_em),
+                }
+                for p in pratos
+            ]
+        except Exception:
+            d['pratos'] = []
         # include per-categoria statuses (optional)
         try:
             cat_rows = db.query(PedidoCategoriaStatusModel).filter(PedidoCategoriaStatusModel.pedido_id == order.id).all()
@@ -1381,6 +1565,7 @@ def add_items_to_order(order_id: int, payload: dict, db: Session = Depends(get_d
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -1410,6 +1595,12 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
         if not order:
             raise HTTPException(status_code=404, detail='Pedido not found')
         # delete related remessas, items and per-categoria statuses before deleting the pedido
+        try:
+            # pratos referenciam remessas via FK; apagar antes de apagar as remessas
+            db.query(PratoModel).filter(PratoModel.pedido_id == order.id).delete()
+        except Exception:
+            pass
+
         try:
             db.query(PedidoRemessaModel).filter(PedidoRemessaModel.pedido_id == order.id).delete()
         except Exception:
@@ -1486,6 +1677,7 @@ def delete_order_item(order_id: int, item_id: int, db: Session = Depends(get_db)
         item_payload = {
             'id': item.id,
             'remessa_id': getattr(item, 'remessa_id', None),
+            'prato_id': getattr(item, 'prato_id', None),
             'produto_id': item.produto_id,
             'name': item.nome,
             'quantity': item.quantidade,
@@ -1540,6 +1732,7 @@ def delete_order_item(order_id: int, item_id: int, db: Session = Depends(get_db)
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -1696,6 +1889,7 @@ def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: S
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,
@@ -1939,6 +2133,7 @@ def update_order(order_id: int, payload: dict = Body(...), db: Session = Depends
                 {
                     'id': it.id,
                     'remessa_id': getattr(it, 'remessa_id', None),
+                    'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
                     'produto_id': it.produto_id,
                     'name': it.nome,

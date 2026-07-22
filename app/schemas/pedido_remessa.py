@@ -1,6 +1,7 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
+from app.schemas.prato import PratoGroupCreate
 
 
 class PedidoRemessaCreate(BaseModel):
@@ -10,6 +11,8 @@ class PedidoRemessaCreate(BaseModel):
     # tipo da remessa: 'local' ou 'delivery'
     tipo: Optional[str] = 'local'
     status: Optional[str] = 'pendente'
+    # grupos opcionais de itens (subconjunto de item_ids) a agrupar em "pratos"
+    pratos: Optional[List[PratoGroupCreate]] = None
 
 
 class PedidoRemessaRead(BaseModel):

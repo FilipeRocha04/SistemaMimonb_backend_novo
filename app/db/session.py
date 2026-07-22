@@ -127,6 +127,7 @@ def create_db():
         import app.models.pedido_item  # noqa: F401
         import app.models.pedido_remessa  # noqa: F401
         import app.models.pedido_categoria_status  # noqa: F401
+        import app.models.prato  # noqa: F401
     except Exception:
         pass
     Base.metadata.create_all(bind=engine)
