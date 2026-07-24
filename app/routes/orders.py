@@ -1075,7 +1075,19 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
             prato_groups = payload.get('pratos') or []
             moved_ids = {it.id for it in moved_items}
             for group in prato_groups:
-                group_item_ids = [i for i in (group.get('item_ids') or []) if i in moved_ids]
+                # item_ids chegam do JSON do frontend, geralmente como string
+                # (ex.: "123"); moved_ids guarda os ids reais (int) vindos do
+                # model. Comparar direto (`i in moved_ids`) nunca casava
+                # string com int, então nenhum prato era criado por aqui.
+                raw_group_ids = group.get('item_ids') or []
+                group_item_ids = []
+                for raw_id in raw_group_ids:
+                    try:
+                        parsed_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed_id in moved_ids:
+                        group_item_ids.append(parsed_id)
                 if not group_item_ids:
                     continue
                 prato = PratoModel(

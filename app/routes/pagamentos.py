@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
@@ -83,3 +83,13 @@ def update_pagamento(pagamento_id: int = Path(...), payload: PagamentoUpdate = N
     db.commit()
     db.refresh(pagamento)
     return pagamento
+
+
+@router.delete("/{pagamento_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_pagamento(pagamento_id: int = Path(...), db: Session = Depends(get_db)):
+    pagamento = db.query(PagamentoModel).filter(PagamentoModel.id == pagamento_id).first()
+    if not pagamento:
+        raise HTTPException(status_code=404, detail="Pagamento não encontrado")
+    db.query(PagamentoPagadorFormaModel).filter(PagamentoPagadorFormaModel.pagamento_id == pagamento_id).delete()
+    db.delete(pagamento)
+    db.commit()

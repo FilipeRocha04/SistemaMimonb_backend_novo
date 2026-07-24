@@ -58,7 +58,7 @@ def list_reservas(
         if status:
             q = q.filter(ReservaModel.status == status)
 
-        q = q.order_by(ReservaModel.data_reserva.desc(), ReservaModel.hora_reserva.asc())
+        q = q.order_by(ReservaModel.data_reserva.desc(), ReservaModel.hora_reserva.asc(), ReservaModel.id.asc())
         offset = (page - 1) * limit
         rows = q.offset(offset).limit(limit).all()
 
