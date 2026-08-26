@@ -295,7 +295,12 @@ def to_brasilia(dt):
 
     Behavior:
     - If dt is None -> returns None
-    - If dt is naive, assume it is in UTC and attach tzinfo=UTC before converting.
+    - If dt is naive, it already IS local Brazil time (o MySQL do projeto roda
+      com time_zone=SYSTEM=America/Sao_Paulo e `criado_em` vem de NOW() do
+      próprio banco, sem conversão) — só anexamos o tzinfo, sem deslocar.
+      Assumir UTC aqui (como antes) deslocava o horário exibido em 3 horas.
+    - If dt already has tzinfo (ex.: veio de algum lugar que já é UTC de
+      verdade), converte normalmente para o fuso do Brasil.
     - If zoneinfo is available, convert to that zone; otherwise return the original dt.
     """
     try:
@@ -303,9 +308,9 @@ def to_brasilia(dt):
             return None
         # if zoneinfo is configured, use it
         if BRAZIL_TZ is not None:
-            # ensure dt is timezone-aware (assume UTC if naive)
             if getattr(dt, 'tzinfo', None) is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                # naive: já é horário local do Brasil, só anexa o tzinfo
+                return dt.replace(tzinfo=BRAZIL_TZ)
             return dt.astimezone(BRAZIL_TZ)
         # no zoneinfo available: best-effort, return dt unchanged
         return dt

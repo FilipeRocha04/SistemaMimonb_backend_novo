@@ -27,12 +27,22 @@ def make_aware_in_brazil(dt: datetime) -> datetime:
 
 
 def local_day_range_to_utc(date_str: str):
-    """Given a local date string (YYYY-MM-DD or ISO datetime), return
-    a tuple (start_utc, end_utc) representing the UTC datetime range for that
-    local day in America/Sao_Paulo.
+    """Given a local date string (YYYY-MM-DD or ISO datetime), return a tuple
+    (start, end) covering that local day in America/Sao_Paulo, for comparing
+    against `pedidos.criado_em`.
+
+    NOTA IMPORTANTE: apesar do nome (mantido por compatibilidade com quem já
+    importa esta função), o valor retornado NÃO é convertido para UTC. O
+    MySQL do projeto roda com `time_zone=SYSTEM` (America/Sao_Paulo) e
+    `criado_em` é preenchido via `NOW()` do próprio banco — ou seja, já vem
+    salvo em horário local do Brasil, sem timezone. Converter o intervalo do
+    filtro para UTC (como esta função fazia antes) deslocava a comparação em
+    3 horas, fazendo pedidos criados entre meia-noite e 3h da manhã caírem no
+    dia anterior no filtro "Hoje"/data específica. Comparar direto como
+    horário local (naive) é o que efetivamente bate com o que está no banco.
 
     Examples:
-      date_str = '2026-01-11' -> range covering 2026-01-11 00:00:00-03:00 .. 23:59:59.999999-03:00
+      date_str = '2026-01-11' -> range covering 2026-01-11 00:00:00 .. 23:59:59.999999 (local)
       date_str = '2026-01-11T10:00:00' -> treats as that local datetime and returns start=end of that instant
     """
     if not date_str:
@@ -54,16 +64,6 @@ def local_day_range_to_utc(date_str: str):
     except Exception:
         return None, None
 
-    # make them aware in Brazil tz and convert to UTC
-    start_aware = make_aware_in_brazil(start_local)
-    end_aware = make_aware_in_brazil(end_local)
-
-    try:
-        start_utc = start_aware.astimezone(timezone.utc)
-        end_utc = end_aware.astimezone(timezone.utc)
-    except Exception:
-        # fallback: assume fixed -3 offset
-        start_utc = (start_aware - timedelta(hours=3)).replace(tzinfo=timezone.utc)
-        end_utc = (end_aware - timedelta(hours=3)).replace(tzinfo=timezone.utc)
-
-    return start_utc, end_utc
+    # Retorna os limites como horário local "naive" (sem tzinfo), igual ao
+    # que é armazenado em `criado_em` pelo MySQL — nada de conversão de fuso.
+    return start_local, end_local
