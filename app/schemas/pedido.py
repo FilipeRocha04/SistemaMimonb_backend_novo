@@ -24,6 +24,8 @@ class PedidoItem(BaseModel):
     categoria: Optional[str] = None
     category: Optional[str] = None
     status: Optional[str] = None
+    # marca o item como prioridade na tela da cozinha
+    prioridade: Optional[bool] = False
 
 
 class PedidoBase(BaseModel):

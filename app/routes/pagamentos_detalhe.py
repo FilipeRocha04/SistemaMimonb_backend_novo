@@ -3,10 +3,11 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.pagador import PagamentoPagadorForma as PagamentoPagadorFormaModel
 from app.schemas.pagamento import PagamentoPagadorFormaRead, PagamentoPagadorFormaCreate, PagamentoPagadorFormaUpdate
+from app.services.auth import get_current_user
 
 from typing import List
 
-router = APIRouter(prefix="/pagamentos/detalhe", tags=["PagamentosDetalhe"])
+router = APIRouter(prefix="/pagamentos/detalhe", tags=["PagamentosDetalhe"], dependencies=[Depends(get_current_user)])
 
 @router.patch("/{detalhe_id}", response_model=PagamentoPagadorFormaRead)
 def update_pagamento_detalhe(detalhe_id: int = Path(...), payload: PagamentoPagadorFormaUpdate = None, db: Session = Depends(get_db)):

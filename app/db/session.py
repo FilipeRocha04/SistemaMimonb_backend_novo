@@ -241,3 +241,22 @@ def create_db():
     except Exception:
         # Non-fatal: continue startup even if inspector fails
         pass
+
+    # Ensure pedido_items.prioridade column exists (itens marcados como
+    # prioridade sobem para o topo da tela da cozinha)
+    try:
+        inspector4 = inspect(engine)
+        if 'pedido_items' in inspector4.get_table_names():
+            item_cols2 = [c['name'] for c in inspector4.get_columns('pedido_items')]
+            if 'prioridade' not in item_cols2:
+                try:
+                    with engine.begin() as conn:
+                        if DATABASE_URL.startswith('sqlite'):
+                            conn.execute(text("ALTER TABLE pedido_items ADD COLUMN prioridade SMALLINT"))
+                            conn.execute(text("UPDATE pedido_items SET prioridade = 0 WHERE prioridade IS NULL"))
+                        else:
+                            conn.execute(text("ALTER TABLE pedido_items ADD COLUMN prioridade SMALLINT NOT NULL DEFAULT 0"))
+                except Exception as exc_prioridade:
+                    print("Warning: failed to add column 'prioridade' to 'pedido_items':", exc_prioridade)
+    except Exception:
+        pass

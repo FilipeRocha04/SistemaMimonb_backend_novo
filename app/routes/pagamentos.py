@@ -6,8 +6,9 @@ from app.db.session import get_db
 from app.models.pagamento import Pagamento as PagamentoModel
 from app.models.pagador import PagamentoPagadorForma as PagamentoPagadorFormaModel
 from app.schemas.pagamento import PagamentoCreate, PagamentoRead, PagamentoPagadorFormaCreate, PagamentoPagadorFormaRead, PagamentoUpdate
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/pagamentos", tags=["Pagamentos"])
+router = APIRouter(prefix="/pagamentos", tags=["Pagamentos"], dependencies=[Depends(get_current_user)])
 
 
 # Use shared get_db from app.db.session

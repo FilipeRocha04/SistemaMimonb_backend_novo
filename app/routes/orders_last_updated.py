@@ -5,11 +5,12 @@ from datetime import datetime
 from app.db.session import get_db
 from app.models.pedido import Pedido as PedidoModel
 from app.core.timezone_utils import BRAZIL_TZ
+from app.services.auth import get_current_user
 
 router = APIRouter()
 
-@router.get("/orders/last_updated")
-def orders_last_updated(db: Session = Depends(get_db)):
+@router.get("/pedidos/ultima-atualizacao")
+def orders_last_updated(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     # Retorna o maior valor de data_pedido ou atualizado_em
     last = db.query(func.max(PedidoModel.atualizado_em)).scalar()
     # Se não houver campo atualizado_em, pode usar data_pedido ou criado_em

@@ -7,8 +7,9 @@ from app.db.session import get_db
 from app.models.reserva import Reserva as ReservaModel
 from app.models.client import Cliente as ClienteModel
 from app.schemas.reserva import ReservaCreate, ReservaRead
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/reservas", tags=["Reservas"])
+router = APIRouter(prefix="/reservas", tags=["Reservas"], dependencies=[Depends(get_current_user)])
 
 
 # Use shared get_db from app.db.session

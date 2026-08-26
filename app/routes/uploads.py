@@ -1,14 +1,25 @@
 
 import os
 import uuid
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException, Query
 from minio import Minio
 
-router = APIRouter(prefix="/uploads", tags=["uploads"])
+from app.services.auth import get_current_user
+from app.core.rate_limit import limiter
+
+router = APIRouter(prefix="/uploads", tags=["uploads"], dependencies=[Depends(get_current_user)])
+
+# Tipos e tamanho máximo aceitos para upload de imagem de produto.
+_ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024  # 8 MB
 
 # Rota para remover imagem do MinIO
 @router.delete("/image")
 async def delete_image(key: str = Query(...)):
+    # Evita que a chave saia da pasta "produtos/" (path traversal / remoção
+    # de objetos fora do escopo de imagens de produto).
+    if not key.startswith("produtos/") or ".." in key:
+        raise HTTPException(status_code=400, detail="Chave de imagem inválida")
     minio_endpoint = os.getenv("MINIO_ENDPOINT")
     minio_access_key = os.getenv("MINIO_ACCESS_KEY")
     minio_secret_key = os.getenv("MINIO_SECRET_KEY")
@@ -30,7 +41,11 @@ async def delete_image(key: str = Query(...)):
 
 
 @router.post("/image")
-async def upload_image(file: UploadFile = File(...)):
+@limiter.limit("20/minute")
+async def upload_image(request: Request, file: UploadFile = File(...)):
+    if file.content_type not in _ALLOWED_IMAGE_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Tipo de arquivo não permitido. Envie uma imagem (jpeg, png, webp ou gif).")
+
     minio_endpoint = os.getenv("MINIO_ENDPOINT")
     minio_access_key = os.getenv("MINIO_ACCESS_KEY")
     minio_secret_key = os.getenv("MINIO_SECRET_KEY")
@@ -57,11 +72,14 @@ async def upload_image(file: UploadFile = File(...)):
     key = f"produtos/{filename}"
 
 
+    # Calcula o tamanho real do arquivo
+    file.file.seek(0, os.SEEK_END)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size > _MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Imagem excede o tamanho máximo permitido (8MB)")
+
     try:
-        # Calcula o tamanho real do arquivo
-        file.file.seek(0, os.SEEK_END)
-        file_size = file.file.tell()
-        file.file.seek(0)
         client.put_object(
             minio_bucket,
             key,

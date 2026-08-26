@@ -9,8 +9,15 @@ from app.schemas.user import UserCreate, UserRead, Token, UserUpdate, LoginReque
 from app.services import auth as auth_service
 from app.db.session import get_db
 from app.models.user import User as UserModel
+from app.core.config import settings
+from app.core.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+# Cookies de refresh token só devem ir com Secure=True quando servidos por
+# HTTPS (produção). Em dev local (http://localhost) o navegador rejeitaria
+# um cookie Secure vindo de origem não-HTTPS.
+_COOKIE_SECURE = settings.APP_ENV == "production"
 
 # Endpoint protegido para listar usuários
 @router.get("/users")
@@ -62,7 +69,8 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)):
     from app.services import auth as auth_service_module
     from app.models.user import User as UserModel
     import logging
@@ -90,7 +98,8 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def register(request: Request, user_in: UserCreate, db: Session = Depends(get_db)):
     # check existing
     if db.query(UserModel).filter(UserModel.email == user_in.email).first():
         raise HTTPException(status_code=400, detail="Email já registrado")
@@ -126,7 +135,8 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(form_data: LoginRequest, response: Response, request: Request, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def login(request: Request, form_data: LoginRequest, response: Response, db: Session = Depends(get_db)):
     # accepts identifier (email OR username) + password
     user = auth_service.authenticate_user(db, form_data.identifier, form_data.password)
     if not user:
@@ -153,7 +163,7 @@ def login(form_data: LoginRequest, response: Response, request: Request, db: Ses
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,
+        secure=_COOKIE_SECURE,
         samesite="lax",
         max_age=auth_service.settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
         path="/",
@@ -213,7 +223,7 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
             key="refresh_token",
             value=new_refresh_token,
             httponly=True,
-            secure=False,
+            secure=_COOKIE_SECURE,
             samesite="lax",
             max_age=auth_service.settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
             path="/",
@@ -227,7 +237,8 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
 
 
 @router.post('/forgot-password')
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """Trigger a password reset flow.
 
     Security note: do NOT reveal whether the email exists. Return a generic message.
@@ -313,9 +324,19 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user=Depend
 
 
 # Dev/debug route: list users directly from the database
+# SEGURANÇA: estava completamente pública — qualquer pessoa podia listar
+# todos os usuários (email/username/papel) sem autenticação. Restrita a
+# admin. Recomenda-se removê-la quando não for mais necessária (ver
+# relatório de segurança).
 # Use Postman or browser to call: GET /auth/dev/users
 @router.get("/dev/users")
-def list_users_debug(db: Session = Depends(get_db)):
+def list_users_debug(
+    db: Session = Depends(get_db),
+    current_user=Depends(auth_service.get_current_user),
+):
+    cur_role = getattr(getattr(current_user, 'papel', None), 'value', getattr(current_user, 'papel', None))
+    if cur_role != 'admin':
+        raise HTTPException(status_code=403, detail="Privilégios insuficientes")
     try:
         result = db.execute(text("SELECT id, email, username, papel, criado_em FROM users ORDER BY id DESC LIMIT 100"))
         rows = [dict(r) for r in result.mappings().all()]
@@ -324,16 +345,27 @@ def list_users_debug(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# SEGURANÇA: estava completamente pública e devolvia a DATABASE_URL crua
+# (com usuário/senha do banco em texto puro) para qualquer pessoa que
+# conhecesse a URL. Restrita a admin e sem mais expor a credencial —
+# devolve só host/porta/nome do banco, nunca a senha.
 @router.get("/dev/db")
-def db_info():
-    # return which DB URL the app is using and engine info for debugging
+def db_info(current_user=Depends(auth_service.get_current_user)):
+    cur_role = getattr(getattr(current_user, 'papel', None), 'value', getattr(current_user, 'papel', None))
+    if cur_role != 'admin':
+        raise HTTPException(status_code=403, detail="Privilégios insuficientes")
     try:
         from app.db.session import engine
-        engine_url = str(engine.url)
+        url = engine.url
+        safe_info = {
+            "drivername": url.drivername,
+            "host": url.host,
+            "port": url.port,
+            "database": url.database,
+        }
     except Exception:
-        engine_url = None
-    return {"settings_database_url": getattr(auth_service, 'settings', {}).DATABASE_URL if hasattr(auth_service, 'settings') else None,
-            "engine_url": engine_url}
+        safe_info = None
+    return {"database": safe_info}
 
 
 

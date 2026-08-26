@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.pagador import Pagador as PagadorModel
 from app.schemas.pagador import PagadorCreate, PagadorRead
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/pagadores", tags=["Pagadores"])
+router = APIRouter(prefix="/pagadores", tags=["Pagadores"], dependencies=[Depends(get_current_user)])
 
 @router.post("", response_model=PagadorRead)
 @router.post("/", response_model=PagadorRead)

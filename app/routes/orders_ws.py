@@ -3,6 +3,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import List, Optional
 
 from app.utils import redis_bus
+from app.services.auth import decode_token
 
 router = APIRouter()
 
@@ -36,8 +37,20 @@ def schedule_coroutine(coro) -> None:
     except Exception:
         coro.close()
 
-@router.websocket("/ws/orders")
+@router.websocket("/ws/pedidos")
 async def websocket_orders(websocket: WebSocket):
+    # Autenticação do WebSocket: o navegador não permite enviar o header
+    # "Authorization" no handshake de WS, então o token vem via query string
+    # (?token=...), validado (assinatura + expiração) antes do accept().
+    # Sem token válido, a conexão é recusada antes de entrar na lista de
+    # broadcast — assim ninguém não autenticado recebe os sinais de
+    # atualização de pedidos/cozinha.
+    token = websocket.query_params.get("token")
+    payload = decode_token(token) if token else None
+    if not payload or not payload.get("sub"):
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     active_connections.append(websocket)
     try:

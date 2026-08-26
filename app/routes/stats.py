@@ -9,8 +9,9 @@ from app.models.pedido import Pedido as PedidoModel
 from app.models.pedido_item import PedidoItem as PedidoItemModel
 from app.models.product import Produto as ProdutoModel
 from app.core.timezone_utils import BRAZIL_TZ
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/stats", tags=["Stats"])
+router = APIRouter(prefix="/stats", tags=["Stats"], dependencies=[Depends(get_current_user)])
 
 
 def compute_effective_total(db: Session, filters: list) -> float:

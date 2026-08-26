@@ -5,8 +5,12 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import User as UserModel
 from app.schemas.user import UserRead
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/users", tags=["Users"])
+# NOTA: este router não está registrado em app.main atualmente (código
+# morto/órfão) — o frontend usa /auth/users, não /users. Protegido mesmo
+# assim por padrão (deny-by-default), caso venha a ser registrado no futuro.
+router = APIRouter(prefix="/usuarios", tags=["Users"], dependencies=[Depends(get_current_user)])
 
 
 # Use shared get_db from app.db.session

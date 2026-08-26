@@ -24,6 +24,11 @@ class Pedido(Base):
     observacao = Column(Text, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     # relationship to items (PedidoItem)
+    # Sem order_by por prioridade aqui de propósito: a ordem dos itens deve
+    # permanecer estável (ordem de criação) em telas como o detalhe do
+    # pedido. A tela da cozinha é quem separa os itens de prioridade num
+    # card próprio no topo (ver KitchenPage.tsx), sem depender da ordem
+    # em que a API devolve os itens.
     items = relationship('PedidoItem', backref='pedido', cascade='all, delete-orphan', lazy='selectin')
     # optional joined cliente relationship for convenience
     from app.models.client import Cliente  # local import to avoid circular

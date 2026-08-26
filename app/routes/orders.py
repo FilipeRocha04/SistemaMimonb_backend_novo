@@ -21,8 +21,9 @@ from app.models.prato import Prato as PratoModel
 from app.models.pedido_categoria_status import PedidoCategoriaStatus as PedidoCategoriaStatusModel
 from datetime import timezone, datetime
 from app.core.timezone_utils import local_day_range_to_utc, BRAZIL_TZ
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/orders", tags=["Orders"])
+router = APIRouter(prefix="/pedidos", tags=["Orders"], dependencies=[Depends(get_current_user)])
 
 # module-level default for remessa status map (per-request handlers will overwrite when available)
 remessa_status_map = {}
@@ -583,6 +584,7 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
         data = {
             'id': p.id,
             'cliente_id': p.cliente_id,
+            'cliente_nome': getattr(p.cliente, 'nome', None) if getattr(p, 'cliente', None) else None,
             'usuario_id': p.usuario_id,
             # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
             'tipo': None,
@@ -602,6 +604,7 @@ def create_order(payload: PedidoCreate, db: Session = Depends(get_db)):
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -761,6 +764,7 @@ def list_orders(db: Session = Depends(get_db), date_from: str = None, date_to: s
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -887,6 +891,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -1166,6 +1171,7 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
         d = {
             'id': order.id,
             'cliente_id': order.cliente_id,
+            'cliente_nome': getattr(order.cliente, 'nome', None) if getattr(order, 'cliente', None) else None,
             'usuario_id': order.usuario_id,
             # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
             'tipo': None,
@@ -1181,6 +1187,7 @@ def create_remessa_for_order(order_id: int, payload: dict, db: Session = Depends
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -1335,6 +1342,7 @@ def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict, db: 
         d = {
             'id': order.id,
             'cliente_id': order.cliente_id,
+            'cliente_nome': getattr(order.cliente, 'nome', None) if getattr(order, 'cliente', None) else None,
             'usuario_id': order.usuario_id,
             # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
             'tipo': None,
@@ -1350,6 +1358,7 @@ def update_remessa_for_order(order_id: int, remessa_id: int, payload: dict, db: 
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -1564,6 +1573,7 @@ def add_items_to_order(order_id: int, payload: dict, db: Session = Depends(get_d
         return {
             'id': order.id,
             'cliente_id': order.cliente_id,
+            'cliente_nome': getattr(order.cliente, 'nome', None) if getattr(order, 'cliente', None) else None,
             'usuario_id': order.usuario_id,
             # Deprecated: stop returning pedidos.tipo; use remessas[].tipo
             'tipo': None,
@@ -1579,6 +1589,7 @@ def add_items_to_order(order_id: int, payload: dict, db: Session = Depends(get_d
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -1746,6 +1757,7 @@ def delete_order_item(order_id: int, item_id: int, db: Session = Depends(get_db)
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -1829,6 +1841,15 @@ def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: S
                 raise
             except Exception:
                 pass
+        if 'prioridade' in payload:
+            try:
+                # Item já pronto/entregue não pode mais ser (des)marcado como
+                # prioridade: já saiu da fila de preparo da cozinha.
+                current_status = str(item.status or '').lower()
+                if 'pront' not in current_status and 'entreg' not in current_status:
+                    item.prioridade = 1 if payload['prioridade'] else 0
+            except Exception:
+                pass
         # support explicit price factor (e.g., meia pizza)
 
         # commit e refresh para garantir que order.items está atualizado
@@ -1884,6 +1905,11 @@ def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: S
         except Exception:
             pass
 
+        try:
+            schedule_coroutine(notify_orders_update())
+        except Exception:
+            pass
+
         return {
             'id': order.id,
             'cliente_id': order.cliente_id,
@@ -1903,6 +1929,7 @@ def update_order_item_quantity(order_id: int, item_id: int, payload: dict, db: S
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,
@@ -2147,6 +2174,7 @@ def update_order(order_id: int, payload: dict = Body(...), db: Session = Depends
                     'remessa_id': getattr(it, 'remessa_id', None),
                     'prato_id': getattr(it, 'prato_id', None),
                     'status': getattr(it, 'status', None),
+                    'prioridade': bool(getattr(it, 'prioridade', 0) or 0),
                     'produto_id': it.produto_id,
                     'name': it.nome,
                     'quantity': it.quantidade,

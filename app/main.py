@@ -21,9 +21,14 @@
 # from app.routes import orders as orders_routes
 # from app.routes import kitchen as kitchen_routes
 # from app.routes import pagamentos as pagamentos_routes
-from app.routes import orders_ws
+# from app.routes import orders_ws
 # from app.routes import users as users_routes
-from app.routes import stats as stats_routes
+# from app.routes import stats as stats_routes
+# NOTA SEGURANÇA: as duas linhas acima estavam ativas (sem '#') dentro deste
+# bloco morto/comentado, e importavam app.routes.stats/orders_ws antes do
+# load_dotenv() do bloco ativo mais abaixo — fazendo o carregamento de
+# variáveis de ambiente (.env) rodar tarde demais para o app.core.config.
+# Foram comentadas para restaurar a ordem correta de inicialização.
 # from app.routes import google_oauth
 # from app.db import session as db_session
 # from app.core.config import settings
@@ -194,7 +199,12 @@ from app.core.config import settings
 from app.routes.orders_last_updated import router as orders_last_updated_router
 from fastapi import FastAPI, Request
 import time
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from app.core.rate_limit import limiter
 
 
 
@@ -210,6 +220,62 @@ app = FastAPI(
     description="Backend profissional com FastAPI",
     redirect_slashes=False,
 )
+
+# =========================
+# RATE LIMITING (slowapi)
+# =========================
+# Limite global (default_limits definido em app.core.rate_limit) aplicado a
+# toda rota via SlowAPIMiddleware; rotas específicas (ex.: /auth/login) usam
+# @limiter.limit(...) com um valor mais restritivo.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+
+# =========================
+# TRATAMENTO CENTRALIZADO DE ERROS
+# =========================
+# Vários endpoints fazem `raise HTTPException(status_code=500, detail=str(e))`,
+# o que pode vazar mensagens internas (erros de driver de banco, caminhos,
+# etc.) para o cliente. Em produção, normalizamos o texto de qualquer erro
+# 5xx antes de responder, mas preservamos o detalhe original nos logs do
+# servidor para diagnóstico.
+_err_logger = logging.getLogger("app.errors")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def sanitized_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code >= 500:
+        _err_logger.error(
+            "Erro 500 em %s %s: %s", request.method, request.url.path, exc.detail
+        )
+        if settings.APP_ENV == "production":
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": "Erro interno do servidor"},
+            )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+# =========================
+# HEADERS DE SEGURANÇA
+# =========================
+# Apenas headers que não têm risco de quebrar o app (não inclui CSP, que
+# exigiria auditar todo script/estilo inline do frontend antes de ativar).
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.APP_ENV == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
 
 @app.middleware("http")
 async def log_request_time(request: Request, call_next):
@@ -247,7 +313,7 @@ app.add_middleware(
 # =========================
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("SECRET_KEY", "dev-secret-key"),
+    secret_key=settings.SECRET_KEY,
 )
 
 # =========================

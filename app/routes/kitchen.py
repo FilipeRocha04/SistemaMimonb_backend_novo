@@ -1,12 +1,30 @@
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from starlette.responses import StreamingResponse
 import json
 import asyncio
 
 from app.utils.pubsub import register_queue, unregister_queue, register_ws, unregister_ws, get_status, publish
+from app.services.auth import decode_token, get_current_user
 
-router = APIRouter(prefix="/kitchen", tags=["Kitchen"])
+# NOTA: este router não está incluído em app.main atualmente (código morto/
+# órfão — o frontend usa /ws/orders, de orders_ws.py, para tudo em tempo
+# real da cozinha). Protegido mesmo assim (deny-by-default) para o caso de
+# ser registrado futuramente.
+router = APIRouter(prefix="/cozinha", tags=["Kitchen"])
 from app.utils.pubsub import get_status
+
+
+def _require_token_from_query(request_or_ws) -> dict:
+    """Valida o token JWT vindo via query string (?token=...).
+
+    Usado por /stream (SSE) e /ws (WebSocket), onde o cliente não consegue
+    enviar o header Authorization no handshake.
+    """
+    token = request_or_ws.query_params.get("token")
+    payload = decode_token(token) if token else None
+    if not payload or not payload.get("sub"):
+        return None
+    return payload
 
 
 async def event_generator(request: Request):
@@ -28,12 +46,19 @@ async def event_generator(request: Request):
 
 @router.get("/stream")
 def stream(request: Request):
+    # EventSource do navegador não envia header Authorization; token vem via
+    # query string (?token=...).
+    if not _require_token_from_query(request):
+        raise HTTPException(status_code=401, detail="Token inválido ou ausente")
     # Use StreamingResponse with text/event-stream so we don't rely on EventSourceResponse availability
     return StreamingResponse(event_generator(request), media_type="text/event-stream")
 
 
 @router.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):
+    if not _require_token_from_query(websocket):
+        await websocket.close(code=1008)
+        return
     # accept connection and register websocket
     await websocket.accept()
     register_ws(websocket)
@@ -55,7 +80,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @router.get('/status')
-def status():
+def status(current_user=Depends(get_current_user)):
     # simple debug endpoint
     try:
         return get_status()
@@ -64,7 +89,7 @@ def status():
 
 
 @router.post('/test-publish')
-async def test_publish(payload: dict):
+async def test_publish(payload: dict, current_user=Depends(get_current_user)):
     """Development helper: publish an arbitrary event to connected clients."""
     try:
         # schedule publish without blocking

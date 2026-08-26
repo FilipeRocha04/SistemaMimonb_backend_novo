@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.despesa import Despesa as DespesaModel
 from app.schemas.despesa import DespesaCreate, DespesaRead, DespesaUpdate
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/despesas", tags=["Despesas"])
+router = APIRouter(prefix="/despesas", tags=["Despesas"], dependencies=[Depends(get_current_user)])
 
 
 # Use shared get_db from app.db.session

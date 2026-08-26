@@ -24,3 +24,4 @@ pyyaml==6.0.3
 minio
 python-multipart
 redis==5.2.1
+slowapi==0.1.10

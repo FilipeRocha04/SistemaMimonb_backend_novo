@@ -10,8 +10,9 @@ from app.models.product_price import ProdutoPreco as ProdutoPrecoModel
 from app.schemas.product import ProdutoCreate, ProdutoRead
 from app.schemas.product_price import ProdutoPrecoRead
 import urllib.parse
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/products", tags=["Products"])
+router = APIRouter(prefix="/produtos", tags=["Products"], dependencies=[Depends(get_current_user)])
 
 logger = logging.getLogger(__name__)
 

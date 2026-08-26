@@ -30,9 +30,12 @@ class PagamentoItemPagadorCreate(BaseModel):
     valor: float
     taxa_10: float
 
+from app.services.auth import get_current_user
+
 router = APIRouter(
     prefix="/pagamentos-itens",
-    tags=["pagamentos-itens"]
+    tags=["pagamentos-itens"],
+    dependencies=[Depends(get_current_user)],
 )
 
 # Endpoint para criar pagamentos por itens

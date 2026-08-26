@@ -4,7 +4,11 @@ from pathlib import Path
 
 # If a local .env file exists in the backend folder, load it into os.environ
 # (simple parser so we don't need an extra dependency like python-dotenv).
-env_path = Path(__file__).resolve().parents[1] / ".env"
+# NOTA: parents[2] (não parents[1]) é o correto para chegar em backend/.env a
+# partir de backend/app/core/config.py — o índice errado fazia esse loader
+# nunca encontrar o arquivo; isso só não quebrava porque DATABASE_URL tinha
+# um fallback com credenciais reais hardcoded no código (removido acima).
+env_path = Path(__file__).resolve().parents[2] / ".env"
 if env_path.exists():
     # Load .env and OVERRIDE any existing environment variables so the
     # local backend/.env is authoritative for development.
@@ -40,15 +44,20 @@ class Settings:
     # prefix like "DATABASE_URL=DATABASE_URL=..." which was observed in a
     # malformed .env file. If detected, strip the duplicate prefix so SQLAlchemy
     # receives a valid URL.
-    raw_db = os.getenv(
-        "DATABASE_URL",
-        # "mysql+pymysql://u235343041_mimonb2:Mimonb%402000@srv1524.hstgr.io:3306/u235343041_mimonb2",
-        # "mysql+pymysql://u235343041_mimonb2_dev:Mimonb%402000@srv1524.hstgr.io:3306/u235343041_mimonb2_dev",
-        "mysql+pymysql://mimonb:Filipe%402004@31.97.31.73:3306/mimonbdevofc",
-    )
+    #
+    # SEGURANÇA: nunca hardcode credenciais reais de banco aqui como valor
+    # padrão — isso deixa a senha do banco de produção versionada no código-
+    # fonte. Sem DATABASE_URL no ambiente, falhamos de forma explícita em vez
+    # de cair silenciosamente num banco real.
+    raw_db = os.getenv("DATABASE_URL", "")
     if isinstance(raw_db, str) and raw_db.startswith("DATABASE_URL="):
         # remove the first 'DATABASE_URL=' that was accidentally included
         raw_db = raw_db.split("=", 1)[1]
+    if not raw_db:
+        raise RuntimeError(
+            "DATABASE_URL não configurada. Defina a variável de ambiente "
+            "DATABASE_URL (ex.: no arquivo backend/.env) antes de iniciar o backend."
+        )
     DATABASE_URL: str = raw_db
 
     # Connection pool tuning (defaults chosen for small/medium apps)
@@ -78,3 +87,13 @@ class Settings:
 
 
 settings = Settings()
+
+# SEGURANÇA: em produção, recusar subir com a SECRET_KEY placeholder padrão.
+# Uma SECRET_KEY previsível permite forjar tokens JWT válidos para qualquer
+# usuário. Isso não altera nenhuma credencial existente — só impede o start
+# do processo se a variável de ambiente nunca tiver sido definida.
+if settings.APP_ENV == "production" and settings.SECRET_KEY == "change-me-to-a-secure-random-string":
+    raise RuntimeError(
+        "SECRET_KEY não configurada para produção (está usando o valor padrão de exemplo). "
+        "Defina uma SECRET_KEY forte e única na variável de ambiente antes de iniciar o backend."
+    )

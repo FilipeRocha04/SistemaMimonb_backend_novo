@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, Integer, ForeignKey, String, Numeric, Text
+from sqlalchemy import Column, BigInteger, Integer, ForeignKey, String, Numeric, Text, SmallInteger
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -21,5 +21,7 @@ class PedidoItem(Base):
     observacao = Column(Text, nullable=True)
     # status de preparo do item: 'pendente' | 'pronto'
     status = Column(String(20), nullable=False, server_default='pendente')
+    # marca o item como prioridade: itens prioritários sobem para o topo da tela da cozinha
+    prioridade = Column(SmallInteger, nullable=False, server_default='0')
 
     # relationship backref is set on Pedido model

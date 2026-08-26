@@ -4,8 +4,13 @@ from typing import List
 from app.db.session import get_db
 from app.models.produto_preco_quantidade import ProdutoPrecoQuantidade as ProdutoPrecoQuantidadeModel
 from app.schemas.produto_preco_quantidade import ProdutoPrecoQuantidadeRead, ProdutoPrecoQuantidadeCreate
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/produtos-precos-quantidade", tags=["Produtos Preços Quantidade"])
+router = APIRouter(
+    prefix="/produtos-precos-quantidade",
+    tags=["Produtos Preços Quantidade"],
+    dependencies=[Depends(get_current_user)],
+)
 
 @router.get("/{produto_id}", response_model=List[ProdutoPrecoQuantidadeRead])
 def get_precos_quantidade(produto_id: int, db: Session = Depends(get_db)):

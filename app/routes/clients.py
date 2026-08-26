@@ -5,8 +5,9 @@ from typing import List
 from app.db.session import get_db
 from app.models.client import Cliente as ClienteModel
 from app.schemas.client import ClienteCreate, ClienteRead
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/clients", tags=["Clients"])
+router = APIRouter(prefix="/clientes", tags=["Clients"], dependencies=[Depends(get_current_user)])
 
 
 # Use shared get_db from app.db.session
