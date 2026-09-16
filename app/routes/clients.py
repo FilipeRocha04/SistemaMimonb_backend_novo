@@ -1,6 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, OperationalError
 from typing import List
+
+
+def _duplicate_name_message(exc: Exception) -> str | None:
+    """Detecta o erro de nome duplicado vindo de uma constraint UNIQUE
+    (IntegrityError) ou de um TRIGGER do MySQL que faz SIGNAL SQLSTATE
+    (aparece como OperationalError, código 1644). Retorna a mensagem amigável
+    quando é esse o caso, ou None se for outro erro qualquer.
+    """
+    text = str(exc)
+    if 'já existe' in text.lower() or '1644' in text or 'Duplicate entry' in text:
+        return "Já existe um cliente cadastrado com esse nome."
+    return None
 
 from app.db.session import get_db
 from app.models.client import Cliente as ClienteModel
@@ -28,6 +41,17 @@ def create_client(payload: ClienteCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(client)
         return client
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Já existe um cliente cadastrado com esse nome.")
+    except OperationalError as e:
+        db.rollback()
+        friendly = _duplicate_name_message(e)
+        if friendly:
+            raise HTTPException(status_code=409, detail=friendly)
+        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -68,6 +92,17 @@ def update_client(client_id: int, payload: ClienteCreate, db: Session = Depends(
         db.commit()
         db.refresh(client)
         return client
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Já existe um cliente cadastrado com esse nome.")
+    except OperationalError as e:
+        db.rollback()
+        friendly = _duplicate_name_message(e)
+        if friendly:
+            raise HTTPException(status_code=409, detail=friendly)
+        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
